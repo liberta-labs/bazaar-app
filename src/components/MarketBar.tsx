@@ -3,20 +3,22 @@
  * Bazaar accrues continuously with every stored price, so it shows the hourly rate and its yearly
  * equivalent rather than a countdown to a payment.
  */
-import { markets as mk, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
+import { markets as mk, previews } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { dayChange } from "../lib/board";
 import { leverage, pct, price, rate18, signedPct, usd } from "../lib/format";
 import { useBoard, useRead } from "../state/connection";
 import { useDayStats } from "../state/data";
 import { PriceAge, StatusBadge, Term, Tip } from "./ui";
+import { AssetIcon } from "./AssetIcon";
 
 const SESSION_HOURS = 1_700;
 
 export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; snap: mk.MarketSnapshot | undefined; spot: { spot: bigint; publishTime: number } | null; stored: boolean }) {
   const { markets: list } = useRead();
   const { prices } = useBoard();
-  const day = useDayStats(list);
+  const day = useDayStats();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -28,8 +30,9 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
   }, [open]);
 
   const d = day.get(info.address);
-  const change = d?.open && spot ? spot.spot - d.open : null;
-  const changePct = change !== null && d?.open ? toNumber18(change) / toNumber18(d.open) : null;
+  const day24 = dayChange(spot?.spot, prices?.dayAgo(info.address), d?.open);
+  const change = day24?.change ?? null;
+  const changePct = day24?.pct ?? null;
   const maxLev = snap ? previews.maxLeverage(snap.margin.imrBp) : null;
   const funding = snap?.funding.currentRatePerHour ?? null;
   const oi = snap ? snap.openInterest.longNotional + snap.openInterest.shortNotional : null;
@@ -38,7 +41,10 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
     <div className="market-bar">
       <div className="market-pick" ref={box}>
         <button className="market-pick-btn" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}>
-          <b>{info.label}</b>
+          <span className="market-name">
+            <AssetIcon market={info} size={24} />
+            <b>{info.label}</b>
+          </span>
           {maxLev !== null && <span className="badge">{leverage(maxLev).replace(".00", "")}</span>}
           <span className="muted">▾</span>
         </button>
@@ -46,8 +52,7 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
           <div className="menu market-menu" role="listbox">
             {list.map((m) => {
               const p = prices?.price(m.address);
-              const md = day.get(m.address);
-              const ch = md?.open && p ? toNumber18(p.spot - md.open) / toNumber18(md.open) : null;
+              const ch = dayChange(p?.spot, prices?.dayAgo(m.address), day.get(m.address)?.open)?.pct ?? null;
               return (
                 <button
                   key={m.address}
@@ -59,7 +64,10 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
                   }}
                 >
                   <span className="spread" style={{ width: "100%" }}>
-                    <b>{m.label}</b>
+                    <span className="market-name">
+                      <AssetIcon market={m} size={18} />
+                      <b>{m.label}</b>
+                    </span>
                     <span className="mono">{p ? price(p.spot) : "–"}</span>
                   </span>
                   <span className="spread small" style={{ width: "100%" }}>

@@ -1,10 +1,12 @@
-import { history, markets as mk, toNumber18 } from "@liberta-labs/bazaar-sdk";
+import { history, markets as mk } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FaucetButton } from "../components/Faucet";
+import { AssetIcon } from "../components/AssetIcon";
 import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { Empty, Loading, PriceAge, StatusBadge, Term, Tip } from "../components/ui";
 import { ACTIVE } from "../config/networks";
+import { dayChange } from "../lib/board";
 import { GLOSSARY } from "../lib/glossary";
 import { pct, price, rate18, signedPct, usd } from "../lib/format";
 import { useBoard, useRead, useWallet } from "../state/connection";
@@ -65,7 +67,7 @@ export function MarketsPage() {
   const { markets: list, readBz } = useRead();
   const { snaps, loading } = useMarketSnapshots();
   const { prices } = useBoard();
-  const day = useDayStats(list);
+  const day = useDayStats();
   const acct = useLiveAccount();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -112,14 +114,17 @@ export function MarketsPage() {
                   const stored = s && s.price.updateTs > 0 && s.price.spot > 0n ? s.price : null;
                   const spot = live?.spot ?? stored?.spot ?? null;
                   const d = day.get(m.address);
-                  const change = d?.open && spot ? toNumber18(spot - d.open) / toNumber18(d.open) : null;
+                  const change = dayChange(spot, prices?.dayAgo(m.address), d?.open)?.pct ?? null;
                   const oi = s ? s.openInterest.longNotional + s.openInterest.shortNotional : null;
                   const mine = acct.snaps.get(m.address);
                   return (
                     <tr key={m.address} className="clickable" onClick={() => navigate(`/market/${m.address}`)}>
                       <td>
                         <div className="row" style={{ gap: 6 }}>
-                          <b>{m.label}</b>
+                          <span className="market-name">
+                            <AssetIcon market={m} size={22} />
+                            <b>{m.label}</b>
+                          </span>
                           {m.hours === "trading-hours" && (
                             <Tip text={GLOSSARY.tradingHours}>
                               <span className="badge">trading hours</span>
@@ -156,7 +161,7 @@ export function MarketsPage() {
         )}
       </section>
       <p className="small muted" style={{ marginTop: 12 }}>
-        Prices refresh every 10 seconds from Pyth Pro. {history.CANDLE_INTERVALS.length ? "24-hour change and volume come from fills, so a quiet market shows none." : ""}
+        Prices refresh every 10 seconds from Pyth Pro. 24-hour change is measured against Pyth's price 24 hours earlier. {history.CANDLE_INTERVALS.length ? "24-hour volume comes from fills, so a quiet market shows none." : ""}
       </p>
     </>
   );

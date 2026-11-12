@@ -3,7 +3,7 @@
  * hands it to the SDK as a LivePriceView. The board is the only price source the page has: it holds
  * no Pyth key, and every call that needs a fresh signed price goes through the relayer.
  */
-import { markets as mk } from "@liberta-labs/bazaar-sdk";
+import { markets as mk, toNumber18 } from "@liberta-labs/bazaar-sdk";
 import type { Address, Hex } from "viem";
 
 /** One market's price on the board, as 18-decimal bigints. */
@@ -15,6 +15,17 @@ export interface BoardPrice {
   readonly publishTime: number;
   /** False while Pyth's confidence is wider than the 2% the oracle accepts. */
   readonly confidenceOk: boolean;
+  /**
+   * The price about 24 hours ago from Pyth's history, composed as `spot` is: what the 24-hour change is
+   * measured against. Null when the board does not know it, or is one that does not publish it.
+   */
+  readonly dayAgo: BoardDayAgo | null;
+}
+
+export interface BoardDayAgo {
+  readonly spot: bigint;
+  /** The second that price was generated in. */
+  readonly at: number;
 }
 
 export interface BoardMarket {
@@ -49,6 +60,14 @@ function secondsOf(field: string, v: unknown): number {
   return v;
 }
 
+/** A price's `dayAgo`, or null when it is missing or malformed: it never costs the market its live price. */
+function dayAgoOf(v: unknown): BoardDayAgo | null {
+  if (!isObj(v) || typeof v.spot !== "string" || !/^\d+$/.test(v.spot)) return null;
+  if (typeof v.at !== "number" || !Number.isSafeInteger(v.at) || v.at <= 0) return null;
+  const spot = BigInt(v.spot);
+  return spot > 0n ? { spot, at: v.at } : null;
+}
+
 /** Parse /board.json. A malformed market is skipped; a malformed document throws BoardError. */
 export function parseBoard(doc: unknown): Board {
   if (!isObj(doc)) throw new BoardError("the board is not a JSON object");
@@ -72,6 +91,7 @@ export function parseBoard(doc: unknown): Board {
           high: bigintOf(`${key}.price.high`, raw.price.high),
           publishTime: secondsOf(`${key}.price.publishTime`, raw.price.publishTime),
           confidenceOk: raw.price.confidenceOk !== false,
+          dayAgo: dayAgoOf(raw.price.dayAgo),
         };
         if (price.spot <= 0n) price = null;
       }
@@ -124,6 +144,11 @@ export class BoardPrices implements mk.LivePriceView {
     return this.board.generatedAt - m.price.publishTime > mk.VENUE_CLOSED_AFTER;
   }
 
+  /** The pair's price about 24 hours ago, from Pyth's history; null when the board has none. */
+  dayAgo(pair: Address): bigint | null {
+    return this.entry(pair)?.price?.dayAgo?.spot ?? null;
+  }
+
   /** The spot alone, for the reads that take a single bigint (insurance quotes and budget). */
   spot(pair: Address): bigint | null {
     return this.entry(pair)?.price?.spot ?? null;
@@ -134,6 +159,18 @@ export class BoardPrices implements mk.LivePriceView {
     const p = this.entry(pair)?.price;
     return p ? p.confidenceOk : null;
   }
+}
+
+/**
+ * A price's change over 24 hours: against the board's price 24 hours ago (Pyth's history) when it has
+ * one, else against `fallbackOpen` (the first hourly trade candle of the day). Null without a price or
+ * a reference. `pct` is a display ratio (0.012 is 1.2%); `change` stays exact.
+ */
+export function dayChange(spot: bigint | null | undefined, dayAgo: bigint | null | undefined, fallbackOpen?: bigint | null): { change: bigint; pct: number } | null {
+  const ref = dayAgo && dayAgo > 0n ? dayAgo : fallbackOpen && fallbackOpen > 0n ? fallbackOpen : null;
+  if (ref === null || !spot) return null;
+  const change = spot - ref;
+  return { change, pct: toNumber18(change) / toNumber18(ref) };
 }
 
 /** Seconds since a price was generated, never negative. */

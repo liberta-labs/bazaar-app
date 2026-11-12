@@ -9,6 +9,7 @@ import { amount, dateTime, parseInput, pct, relative, signedPct, signedUsd, toIn
 import { RETURN_WINDOW_SECONDS, type ReturnEstimate, estimateInsuranceReturn, sharePriceOfEvent } from "../lib/insuranceReturn";
 import { forAccount, insuranceDepositPart, insuranceExecutePart, insuranceRequestPart } from "../lib/jobs";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
+import { AssetIcon } from "../components/AssetIcon";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import { useMarketSnapshots } from "../state/data";
 import { useTx } from "../state/tx";
@@ -232,7 +233,11 @@ function MyPosition({ p, m, snap }: { p: history.InsuranceProvider; m: markets.M
   return (
     <tr>
       <td data-main="">
-        <Link to={`/market/${m.address}`}>{m.label}</Link> {snap && snap.status !== "live" && <StatusBadge status={snap.status} />}
+        <span className="market-name">
+          <AssetIcon market={m} size={20} />
+          <Link to={`/market/${m.address}`}>{m.label}</Link>
+        </span>{" "}
+        {snap && snap.status !== "live" && <StatusBadge status={snap.status} />}
       </td>
       <td data-label="Shares" className="num">
         {amount(d.shares, 4)}
@@ -278,7 +283,10 @@ function MarketRow({ m, snap, onInsure }: { m: markets.MarketInfo; snap: markets
   return (
     <tr>
       <td data-main="">
-        <Link to={`/market/${m.address}`}>{m.label}</Link>
+        <span className="market-name">
+          <AssetIcon market={m} size={20} />
+          <Link to={`/market/${m.address}`}>{m.label}</Link>
+        </span>
       </td>
       <td data-label="Fund vs target" className="num">
         <div style={{ minWidth: 120 }}>

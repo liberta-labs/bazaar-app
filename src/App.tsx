@@ -7,7 +7,7 @@ import { PortfolioPage } from "./pages/Portfolio";
 import { ProfilePage } from "./pages/Profile";
 import { ProposalsPage } from "./pages/Proposals";
 import { ConnectionProviders } from "./state/connection";
-import { LiveAccountProvider } from "./state/data";
+import { DayStatsProvider, LiveAccountProvider } from "./state/data";
 import { ThemeProvider } from "./state/theme";
 import { TxProvider } from "./state/tx";
 
@@ -17,6 +17,7 @@ export function App() {
     <ThemeProvider>
     <ConnectionProviders>
       <LiveAccountProvider>
+      <DayStatsProvider>
       <TxProvider>
         <HashRouter>
           <Layout>
@@ -33,6 +34,7 @@ export function App() {
           </Layout>
         </HashRouter>
       </TxProvider>
+      </DayStatsProvider>
       </LiveAccountProvider>
     </ConnectionProviders>
     </ThemeProvider>

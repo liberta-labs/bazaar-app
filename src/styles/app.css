@@ -451,9 +451,21 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 .facts-panel[open] summary { margin-bottom: 10px; }
 
 /* Ticker tape in the header */
-.ticker { flex: 1; min-width: 0; display: flex; gap: 18px; overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 90%, transparent); }
-.ticker::-webkit-scrollbar { display: none; }
-.ticker-item { display: flex; gap: 6px; align-items: baseline; color: var(--text); font-size: 12px; white-space: nowrap; }
+.ticker { flex: 1; min-width: 0; overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 4%, #000 90%, transparent); }
+/* The track holds two copies of the markets and moves left by one copy (-50%), then starts over. */
+.ticker-track { display: flex; width: max-content; animation: ticker-crawl var(--ticker-duration, 40s) linear infinite; }
+/* Each copy ends with the gap between items, so the seam between copies matches the spacing. */
+.ticker-group { display: flex; gap: 18px; padding-right: 18px; }
+.ticker:hover .ticker-track, .ticker:focus-within .ticker-track { animation-play-state: paused; }
+@keyframes ticker-crawl { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+/* Reduced motion: no crawl; the single copy scrolls by hand instead. */
+@media (prefers-reduced-motion: reduce) {
+  .ticker { overflow-x: auto; scrollbar-width: none; }
+  .ticker::-webkit-scrollbar { display: none; }
+  .ticker-track { animation: none; }
+  .ticker-group[aria-hidden="true"] { display: none; }
+}
+.ticker-item { display: flex; gap: 6px; align-items: center; color: var(--text); font-size: 12px; white-space: nowrap; }
 .ticker-item:hover { text-decoration: none; color: var(--strong); }
 .header .header-right { margin-left: 0; }
 .header .ticker + .header-right, .header .nav + .header-right { margin-left: auto; }
@@ -519,3 +531,20 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
   .rtable td[data-actions] button { min-height: 36px; }
   .rtable td[data-label="Leaving the fund"] { flex-direction: column; align-items: stretch; text-align: left; }
 }
+
+/* Market icons: a coin's logo, or a generic symbol on a tinted tile. White symbols on these tints stay
+   readable in both themes. */
+.asset-icon { flex: none; display: inline-block; border-radius: 50%; vertical-align: middle; }
+.asset-tile { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: #ffffff; background: #5b6472; }
+.asset-tile svg { width: 72%; height: 72%; }
+.asset-stock { background: #4f46e5; }
+.asset-fx { background: #0f766e; }
+.asset-metal.metal-gold { background: linear-gradient(135deg, #e0b04a, #a8771c); }
+.asset-metal.metal-silver { background: linear-gradient(135deg, #b9c0c8, #6f7882); }
+.asset-metal.metal-platinum { background: linear-gradient(135deg, #a9b4bf, #5d6976); }
+.asset-metal.metal-copper { background: linear-gradient(135deg, #d0875a, #93512b); }
+.asset-energy { background: #57534e; }
+.asset-commodity { background: #7c5a1e; }
+.asset-rates { background: #334155; }
+.asset-unknown { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+.market-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }

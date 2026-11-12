@@ -14,6 +14,7 @@ import { GLOSSARY } from "../lib/glossary";
 import { price } from "../lib/format";
 import { useBoard, useMarketInfo, useRead } from "../state/connection";
 import { useLiveAccount, useStablePrices } from "../state/data";
+import { usePoll } from "../state/poll";
 
 const INTERVAL_LABEL: Record<number, string> = { 60: "1m", 300: "5m", 900: "15m", 3600: "1h", 14400: "4h", 86400: "1d" };
 const CANDLES_SHOWN = 300;
@@ -30,11 +31,11 @@ function useCandles(pair: string | undefined, interval: number) {
   const [candles, setCandles] = useState<ChartCandle[]>([]);
   const [trades, setTrades] = useState(0);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    if (!readBz || !pair) return;
-    let dead = false;
-    setLoading(true);
-    const load = async () => {
+  useEffect(() => setLoading(true), [readBz, pair, interval]);
+  // Paused while the tab is hidden; live fills keep the last candle current in between.
+  usePoll(
+    async (isDead) => {
+      if (!readBz || !pair) return;
       try {
         const now = Math.floor(Date.now() / 1000);
         const to = now - (now % interval) + interval;
@@ -49,23 +50,20 @@ function useCandles(pair: string | undefined, interval: number) {
         }
         const before = await readBz.history.candles(pair as never, interval, { to: from, order: "desc", first: 1 });
         const filled = history.fillCandleGaps([...before.items, ...rows], interval, before.items.length ? from : undefined, to);
-        if (dead) return;
+        if (isDead()) return;
         setTrades(rows.reduce((s, c) => s + c.tradeCount, 0));
         setCandles(filled.map((c) => ({ time: c.periodStart, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volumeSize })));
       } catch (e) {
         console.warn("candles", e);
-        if (!dead) setCandles([]);
+        if (!isDead()) setCandles([]);
       } finally {
-        if (!dead) setLoading(false);
+        if (!isDead()) setLoading(false);
       }
-    };
-    void load();
-    const t = setInterval(load, Math.max(60_000, interval * 1000));
-    return () => {
-      dead = true;
-      clearInterval(t);
-    };
-  }, [readBz, pair, interval]);
+    },
+    Math.max(60_000, interval * 1000),
+    [readBz, pair, interval],
+    Boolean(readBz && pair),
+  );
 
   /** A fill seen live: fold it into the current period. */
   const onTrade = useCallback(

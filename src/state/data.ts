@@ -4,9 +4,10 @@
  * positions at the live price and judge closed venues without a Pyth key.
  */
 import { account, type markets } from "@liberta-labs/bazaar-sdk";
-import { type ReactNode, createContext, createElement, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
 import { useBoard, useRead, useWallet } from "./connection";
+import { usePoll } from "./poll";
 
 /** A LivePriceView that always reads the latest board, for watchers started once. */
 export function useStablePrices(): markets.LivePriceView {
@@ -134,18 +135,42 @@ export function useLiveAccount(): LiveAccount {
 }
 
 export interface DayStats {
+  /**
+   * The day's first hourly trade candle's open: the 24-hour change's reference only for a market the
+   * price board has no price 24 hours ago for (lib/board.ts `dayChange`).
+   */
   readonly open: bigint | null;
   readonly volume: bigint;
 }
 
-/** 24 hours of hourly candles per market: the price 24 h ago and the day's volume. */
-export function useDayStats(list: readonly markets.MarketInfo[]): ReadonlyMap<Address, DayStats> {
-  const { readBz } = useRead();
+/**
+ * How often the day's stats are read again. Hourly candles move slowly, and the subgraph's query URL
+ * is capped: one read per market every minute, from every component that showed the stats, used it up.
+ */
+const DAY_STATS_EVERY_MS = 5 * 60_000;
+
+interface DayStatsHub {
+  readonly stats: ReadonlyMap<Address, DayStats>;
+  /** Registers a component that shows the stats; returns its release. */
+  readonly want: () => () => void;
+}
+
+/**
+ * 24 hours of hourly candles per market: the price 24 h ago and the day's volume. Read once for the
+ * whole app, and only while a component on screen needs them and the tab is visible; what was read
+ * stays shown in between.
+ */
+function useDayStatsWatch(): DayStatsHub {
+  const { readBz, markets: list } = useRead();
   const [stats, setStats] = useState<ReadonlyMap<Address, DayStats>>(new Map());
-  useEffect(() => {
-    if (!readBz || !list.length) return;
-    let dead = false;
-    const load = async () => {
+  const [wanted, setWanted] = useState(0);
+  const want = useCallback(() => {
+    setWanted((n) => n + 1);
+    return () => setWanted((n) => n - 1);
+  }, []);
+  usePoll(
+    async (isDead) => {
+      if (!readBz) return;
       const now = Math.floor(Date.now() / 1000);
       const from = now - (now % 3600) - 23 * 3600;
       const out = new Map<Address, DayStats>();
@@ -160,15 +185,31 @@ export function useDayStats(list: readonly markets.MarketInfo[]): ReadonlyMap<Ad
           }
         }),
       );
-      if (!dead) setStats(out);
-    };
-    void load();
-    const t = setInterval(load, 60_000);
-    return () => {
-      dead = true;
-      clearInterval(t);
-    };
-  }, [readBz, list]);
-  return stats;
+      if (!isDead()) setStats(out);
+    },
+    DAY_STATS_EVERY_MS,
+    [readBz, list],
+    Boolean(readBz) && list.length > 0 && wanted > 0,
+  );
+  return useMemo(() => ({ stats, want }), [stats, want]);
+}
+
+const DayStatsCtx = createContext<DayStatsHub | null>(null);
+
+export function DayStatsProvider({ children }: { children: ReactNode }) {
+  return createElement(DayStatsCtx.Provider, { value: useDayStatsWatch() }, children);
+}
+
+/**
+ * Every market's day stats (empty until read, or while the subgraph is unreachable). `need` false
+ * shows what was already read without asking for more reads: the header's ticker, once the price
+ * board gives every market its price 24 hours ago, needs nothing from the subgraph.
+ */
+export function useDayStats(need = true): ReadonlyMap<Address, DayStats> {
+  const hub = useContext(DayStatsCtx);
+  if (!hub) throw new Error("useDayStats outside DayStatsProvider");
+  const { want } = hub;
+  useEffect(() => (need ? want() : undefined), [want, need]);
+  return hub.stats;
 }
 

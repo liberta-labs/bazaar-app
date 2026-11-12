@@ -1,7 +1,7 @@
 import { markets } from "@liberta-labs/bazaar-sdk";
 import type { Address, Hex } from "viem";
 import { describe, expect, it } from "vitest";
-import { BoardError, BoardPrices, fetchBoard, parseBoard, priceAge } from "../src/lib/board";
+import { BoardError, BoardPrices, dayChange, fetchBoard, parseBoard, priceAge } from "../src/lib/board";
 
 const E18 = 10n ** 18n;
 const BTC_FEED = "0x0000000000000000000000000000000000000000000000000000000000000001";
@@ -142,5 +142,37 @@ describe("fetchBoard and priceAge", () => {
   it("counts a price's age in whole seconds, never negative", () => {
     expect(priceAge(100, 112.9)).toBe(12);
     expect(priceAge(100, 90)).toBe(0);
+  });
+});
+
+describe("dayAgo", () => {
+  const withDayAgo = (dayAgo: unknown) =>
+    doc({ extra: { "0x00000000000000000000000000000000000000000000000000000000000000ff": { label: "ETH/USD", legs: [], continuous: true, listings: [], price: { spot: "3000000000000000000000", low: "1", high: "1", publishTime: GENERATED, confidenceOk: true, dayAgo } } } });
+  const ETH = "0x00000000000000000000000000000000000000000000000000000000000000ff";
+
+  it("reads the price 24 hours ago, and treats a board without it, or a malformed one, as unknown", () => {
+    expect(parseBoard(withDayAgo({ spot: "2900000000000000000000", at: GENERATED - 86_400 })).markets.get(ETH)!.price!.dayAgo).toEqual({ spot: 2_900n * E18, at: GENERATED - 86_400 });
+    expect(parseBoard(doc()).markets.get(BTC_FEED)!.price!.dayAgo).toBeNull();
+    for (const bad of [null, "x", { spot: 2900, at: 1 }, { spot: "-1", at: 1 }, { spot: "0", at: 1 }, { spot: "1.5", at: 1 }, { spot: "1", at: -1 }, { spot: "1", at: 1.5 }]) {
+      const m = parseBoard(withDayAgo(bad)).markets.get(ETH)!;
+      expect(m.price!.spot).toBe(3_000n * E18); // the live price stands
+      expect(m.price!.dayAgo).toBeNull();
+    }
+  });
+
+  it("is found by pair through the board's listings", () => {
+    const b = parseBoard(doc({ extra: { [BTC_FEED]: { ...doc().markets[BTC_FEED], price: { ...doc().markets[BTC_FEED]!.price, dayAgo: { spot: "70000000000000000000000", at: GENERATED - 86_400 } } } } }));
+    expect(new BoardPrices(b, 421614).dayAgo(BTC_PAIR)).toBe(70_000n * E18);
+    expect(new BoardPrices(b, 421614).dayAgo(AAPL_PAIR)).toBeNull();
+  });
+});
+
+describe("dayChange", () => {
+  it("measures against the board's price 24 hours ago, else the candle open, else nothing", () => {
+    expect(dayChange(110n * E18, 100n * E18, 50n * E18)).toEqual({ change: 10n * E18, pct: 0.1 });
+    expect(dayChange(90n * E18, null, 100n * E18)).toEqual({ change: -10n * E18, pct: -0.1 });
+    expect(dayChange(90n * E18, 0n, undefined)).toBeNull();
+    expect(dayChange(null, 100n * E18, 100n * E18)).toBeNull();
+    expect(dayChange(100n * E18, 100n * E18)).toEqual({ change: 0n, pct: 0 });
   });
 });

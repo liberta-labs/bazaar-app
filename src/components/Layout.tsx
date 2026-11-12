@@ -1,7 +1,7 @@
-import { toNumber18 } from "@liberta-labs/bazaar-sdk";
-import { type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { ACTIVE } from "../config/networks";
+import { dayChange } from "../lib/board";
 import { price, shortAddr, signedPct } from "../lib/format";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
 import { HAS_PROJECT_ID } from "../state/appkit";
@@ -9,6 +9,7 @@ import { useBoard, useNow, useRead, useWallet } from "../state/connection";
 import { useDayStats } from "../state/data";
 import { type ThemePref, useTheme } from "../state/theme";
 import { FaucetButton } from "./Faucet";
+import { AssetIcon } from "./AssetIcon";
 import { Tip } from "./ui";
 
 const LINKS = [
@@ -120,22 +121,35 @@ function useTradeLink(): string {
 function TickerTape() {
   const { markets: list } = useRead();
   const { prices } = useBoard();
-  const day = useDayStats(list);
+  // Trade candles only for the fallback: once the board has every market's price 24 h ago, the ticker
+  // asks the subgraph for nothing.
+  const day = useDayStats(prices !== null && list.some((m) => prices.dayAgo(m.address) === null));
   if (!list.length) return null;
-  return (
-    <div className="ticker hide-sm" aria-label="Market prices">
+  // Two copies side by side, the track moving left by one copy's width and starting over: a seamless
+  // loop. The second copy is for the eye only, out of the tab order and hidden from screen readers.
+  const group = (copy: boolean) => (
+    <div className="ticker-group" aria-hidden={copy || undefined}>
       {list.map((m) => {
         const p = prices?.price(m.address);
-        const d = day.get(m.address);
-        const ch = d?.open && p ? toNumber18(p.spot - d.open) / toNumber18(d.open) : null;
+        const ch = dayChange(p?.spot, prices?.dayAgo(m.address), day.get(m.address)?.open)?.pct ?? null;
         return (
-          <NavLink key={m.address} to={`/market/${m.address}`} className="ticker-item">
+          <NavLink key={m.address} to={`/market/${m.address}`} className="ticker-item" tabIndex={copy ? -1 : undefined}>
+            <AssetIcon market={m} size={16} />
             <b>{m.label.split("/")[0]}</b>
             <span className="mono">{p ? price(p.spot) : "–"}</span>
             {ch !== null && <span className={`mono ${ch >= 0 ? "up" : "down"}`}>{signedPct(ch)}</span>}
           </NavLink>
         );
       })}
+    </div>
+  );
+  return (
+    <div className="ticker hide-sm" aria-label="Market prices">
+      {/* About 6 seconds per market: a slow, steady crawl whatever the number of markets. */}
+      <div className="ticker-track" style={{ "--ticker-duration": `${list.length * 6}s` } as CSSProperties}>
+        {group(false)}
+        {group(true)}
+      </div>
     </div>
   );
 }
