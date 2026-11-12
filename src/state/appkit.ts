@@ -1,0 +1,67 @@
+/**
+ * Reown AppKit: one connect window for browser-extension wallets (every wallet that announces itself
+ * through EIP-6963, MetaMask first) and phone or desktop wallets over WalletConnect. Email and social
+ * logins, swaps and on-ramp are off: email and social logins create smart-contract wallets, which
+ * cannot sign the gasless requests trading needs.
+ *
+ * The adapter is Reown's Wagmi adapter, as its React docs recommend. Nothing reads or writes through
+ * wagmi: the app takes the wallet's EIP-1193 provider (useAppKitProvider) and hands it to the SDK.
+ */
+import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
+import type { AppKitNetwork } from "@reown/appkit/networks";
+import { createAppKit } from "@reown/appkit/react";
+import { REOWN_PROJECT_ID } from "../config/env";
+import { ACTIVE, ENABLED_CHAINS, NETWORKS } from "../config/networks";
+
+/** MetaMask's id in WalletConnect's wallet registry. */
+export const METAMASK_WALLET_ID = "c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96";
+
+const networks = ENABLED_CHAINS.map((id) => NETWORKS[id]!.appkit) as [AppKitNetwork, ...AppKitNetwork[]];
+
+/** WalletConnect cannot start without a project id; extension wallets still connect. */
+export const HAS_PROJECT_ID = REOWN_PROJECT_ID.length > 0;
+
+export const wagmiAdapter = new WagmiAdapter({ networks, projectId: REOWN_PROJECT_ID || "missing-project-id" });
+
+const origin = typeof window !== "undefined" ? window.location.origin : "https://bazaar.finance";
+
+export const appKit = createAppKit({
+  adapters: [wagmiAdapter],
+  networks,
+  defaultNetwork: ACTIVE.appkit,
+  projectId: REOWN_PROJECT_ID || "missing-project-id",
+  metadata: {
+    name: "Bazaar",
+    description: "Perpetual futures on Arbitrum, with an insurance fund for every market",
+    url: origin,
+    // The icon wallets show for this app (connect prompts, WalletConnect sessions, signature requests).
+    icons: [`${origin}/bazaar-icon.png`],
+  },
+  features: {
+    email: false,
+    socials: false,
+    swaps: false,
+    onramp: false,
+    send: false,
+    history: false,
+    analytics: false,
+    connectorTypeOrder: ["injected", "featured", "recent", "walletConnect", "recommended", "custom", "external"],
+  },
+  featuredWalletIds: [METAMASK_WALLET_ID],
+  enableEIP6963: true,
+  enableInjected: true,
+  enableWalletConnect: HAS_PROJECT_ID,
+  enableCoinbase: true,
+  // Coinbase's smart wallet signs through ERC-1271, which the relayer cannot use.
+  coinbasePreference: "eoaOnly",
+  allowUnsupportedChain: true,
+  // ThemeProvider keeps this in step with the page; this is the theme index.html applied before load.
+  themeMode: typeof document !== "undefined" && document.documentElement.dataset.theme === "light" ? "light" : "dark",
+  themeVariables: {
+    "--w3m-accent": "#f5c518",
+    "--w3m-color-mix": "#0a0a0a",
+    "--w3m-color-mix-strength": 30,
+    "--w3m-border-radius-master": "2px",
+    "--w3m-font-family": "Inter, system-ui, sans-serif",
+  },
+});

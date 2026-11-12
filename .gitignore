@@ -1,0 +1,13 @@
+node_modules
+dist
+.wrangler/
+
+# Local settings. .env holds this machine's values; .env.production is tracked on purpose: it holds only
+# the public VITE_SERVICE_URL. Every VITE_ value ends up in the bundle, so none of these may hold a secret.
+.env
+.env.local
+.env.*.local
+*.local
+
+# The editor's local history, which can keep copies of .env.
+.history/
