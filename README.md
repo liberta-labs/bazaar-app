@@ -10,9 +10,13 @@ It talks to:
 - the user's wallet (browser extensions through EIP-6963, phone and desktop wallets over
   WalletConnect, both through Reown AppKit);
 - a JSON-RPC endpoint, for browsing before a wallet connects;
-- Bazaar's subgraph, for history;
-- the price board and relayer service (`bazaar-relayer-priceboard`), for display prices and gasless
-  transactions.
+- the price board and relayer service (`bazaar-relayer-priceboard`), for display prices, gasless
+  transactions and history. The service asks Bazaar's subgraph on the page's behalf and answers every
+  visitor from one short cache, so the page holds no subgraph key and the subgraph's load does not grow
+  with the audience.
+
+Those are the page's only two addresses: an RPC URL and the service's. [Running your own](#running-your-own)
+shows how to stand up a copy.
 
 Every chain read, transaction, signature and history query goes through `@liberta-labs/bazaar-sdk`.
 
@@ -38,6 +42,7 @@ Fill in `.env` (every value is public; it ends up in the bundle):
 |---|---|---|
 | `VITE_SERVICE_URL` | `http://localhost:8080` | The price board and relayer service. The deployed one is `https://bazaar-relayer-priceboard.fly.dev`, which `.env.production` sets for `npm run build`. |
 | `VITE_RPC_URL` | `https://sepolia-rollup.arbitrum.io/rpc` | JSON-RPC for read-only browsing. |
+| `VITE_SUBGRAPH_URL` | the official deployment's | Optional. A subgraph the page queries itself only when the service cannot answer history. Never one with an API key. |
 | `VITE_REOWN_PROJECT_ID` | none | Reown project ID. Without it, browser wallets still connect but WalletConnect (phone wallets) does not. Allowlist the app's domains in Reown's dashboard. |
 
 With the deployed service in `.env`, nothing else needs to run. To use a service of your own instead, start it (see its README, "Running it") and set `VITE_SERVICE_URL=http://localhost:8080`. Then:
@@ -79,6 +84,49 @@ By hand, from this folder, with `VITE_REOWN_PROJECT_ID` in `.env`:
 npm run build && npx wrangler pages deploy dist --project-name bazaar-app --branch main
 ```
 
+## Running your own
+
+The app is a folder of static files plus one service. There are two ways to run a copy.
+
+**The frontend alone.** Fork this repository, change what you like, and host `dist/` anywhere (Cloudflare
+Pages, Netlify, GitHub Pages, S3, IPFS). Keep `VITE_SERVICE_URL` pointed at a running service; the
+official one answers any origin, and its per-address limits apply to your visitors as to anyone's. You
+need:
+
+1. a Reown project ID of your own (free, [dashboard.reown.com](https://dashboard.reown.com)), with your
+   domain allowed, in `VITE_REOWN_PROJECT_ID`;
+2. `npm run build`, and somewhere to put `dist/`.
+
+Nothing else: no server, no database, no API key.
+
+**The whole stack.** Run the service yourself as well, from
+[bazaar-relayer-priceboard](https://github.com/liberta-labs/bazaar-relayer-priceboard): one container,
+configured by environment variables (its `.env.example` lists them), with a `Dockerfile` and a `fly.toml`
+ready for Fly.io. It needs:
+
+1. a Pyth Pro API key (`PYTH_PRO_TOKEN`), for prices;
+2. an RPC URL and the factory address of the deployment it follows;
+3. a fresh wallet key with a little ETH (`TESTNET_RELAYER_KEY`), to relay gasless transactions;
+4. optionally a subgraph endpoint and key of your own (`TESTNET_SUBGRAPH_URL`,
+   `TESTNET_SUBGRAPH_API_KEY`). Without them it uses the official deployment's public subgraph, which is
+   rate-limited.
+
+Then set `VITE_SERVICE_URL` to your service and build. Every key stays on the service; the page ships
+none.
+
+| The page gets | From | How often |
+|---|---|---|
+| Prices, 24-hour change, 24-hour volume, the subgraph's lag | `GET /board.json` on the service | every 10 seconds, one small cacheable file |
+| Order book, positions, open orders, balances | the chain, over the RPC URL | live |
+| Charts, trades, order and account history, proposals | `POST /subgraph/<chainId>` on the service | when a page opens; charts refresh once a candle |
+| Gasless transactions, test USDC | `POST /relay`, `POST /faucet` on the service | on the user's action |
+
+All of it stops while nobody is using the page: while its tab is hidden, and after 15 minutes without
+input (a bar then says so, and any click, key or scroll resumes). A forgotten tab costs nothing.
+
+If the service does not answer history (an older one, or one set up without a subgraph), the page
+falls back to asking the subgraph itself, at `VITE_SUBGRAPH_URL` or the official public one.
+
 ## Checks
 
 ```bash
@@ -93,8 +141,9 @@ npm run lint
 npm test
 ```
 
-The unit tests cover the board adapter (`test/board.test.ts`), the relay flow with every status the
-relayer answers (`test/relay.test.ts`), the insurance return estimate (`test/insuranceReturn.test.ts`)
+The unit tests cover the board adapter (`test/board.test.ts`), history through the service with its
+fallback (`test/subgraph.test.ts`), the relay flow with every status the relayer answers
+(`test/relay.test.ts`), the insurance return estimate (`test/insuranceReturn.test.ts`)
 and the smart-wallet check (`test/wallet.test.ts`).
 
 ## How it is put together
@@ -104,7 +153,10 @@ and the smart-wallet check (`test/wallet.test.ts`).
 | `src/config/networks.ts` | The networks. Arbitrum Sepolia is on; Arbitrum One is one entry, enabled by adding its chain id to `ENABLED_CHAINS` once its SDK preset has a factory. The Testnet badge and the faucet follow `testnet`. |
 | `src/state/appkit.ts` | Reown AppKit: EIP-6963 extension wallets (MetaMask first) and WalletConnect; email, socials, swaps and on-ramp off; Coinbase limited to its ordinary (EOA) wallet. |
 | `src/state/connection.tsx` | The read-only connection over the RPC URL, the wallet's connection (its EIP-1193 provider passed to `Bazaar.connect` and as `wallet` for signing and sending), chain switching, the smart-wallet check, and the board, polled every 10 seconds. |
-| `src/lib/board.ts` | `/board.json` parsed into 18-decimal bigints, and `BoardPrices`, the SDK's `LivePriceView` over it. Passed as `prices` to every read that takes it. |
+| `src/lib/board.ts` | `/board.json` parsed into 18-decimal bigints, and `BoardPrices`, the SDK's `LivePriceView` over it. Passed as `prices` to every read that takes it. It also carries each market's price 24 hours ago, its 24-hour volume and the subgraph's lag, so the page asks the subgraph for none of them. |
+| `src/lib/subgraph.ts` | Where history comes from: the service's `/subgraph/<chainId>` route, given to `Bazaar.connect` as its subgraph, with the public subgraph as the fallback. |
+| `src/state/activity.tsx` | Whether anyone is using the page: false while its tab is hidden, and after 15 minutes without input, when a bar says updates are paused. Any click, key, scroll or mouse movement resumes them. |
+| `src/state/poll.ts` | Polling that runs only while the page is in use, and catches up at once when it is used again. Every poller (the board, market snapshots, the chain's head, charts) goes through it, and the live account and market watchers stop and restart with it. |
 | `src/lib/relay.ts` | The gasless path: fee quote (re-quoted after `validForSeconds`), `signRelayed`, post at once, and every relayer status (202, 402, 409, 422, 4xx, 5xx) turned into an answer or an error the UI can act on. |
 | `src/state/tx.tsx` | Every write in one modal: confirmation, per-step progress with Arbiscan links, "sign again" when a signature expires, re-signing at the new fee after a 402, and "send from my wallet" when the relayer is down (deposit, cancel, insurance request). One relayed request per market at a time. |
 | `src/lib/jobs.ts` | Which action goes which way: priced actions always relayed; deposit, cancel and insurance request relayed with a wallet fallback; claims, the faucet and governance from the wallet. |

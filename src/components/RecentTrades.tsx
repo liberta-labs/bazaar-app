@@ -7,6 +7,7 @@ import type { history } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useState } from "react";
 import type { Address } from "viem";
 import { price, sizeText, usd } from "../lib/format";
+import { useActivity } from "../state/activity";
 import { useRead } from "../state/connection";
 import { Empty, Loading, TxLink } from "./ui";
 
@@ -46,6 +47,8 @@ function remember(key: string, value: string): void {
 
 export function RecentTrades({ pair, live, base = "asset" }: { pair: Address; live: readonly LiveFill[]; base?: string }) {
   const { readBz } = useRead();
+  // Fills that landed during a pause were not seen live: read the list again on the way back.
+  const { resumes } = useActivity();
   const [rows, setRows] = useState<LiveFill[] | null>(null);
   const [unit, setUnit] = useState<SizeUnit>(() => remembered("bazaar.trades.size", ["asset", "usdc"], "asset"));
   const [order, setOrder] = useState<Order>(() => remembered("bazaar.trades.order", ["desc", "asc"], "desc"));
@@ -61,7 +64,7 @@ export function RecentTrades({ pair, live, base = "asset" }: { pair: Address; li
     return () => {
       dead = true;
     };
-  }, [readBz, pair]);
+  }, [readBz, pair, resumes]);
   if (rows === null && !live.length) return <Loading />;
   const seen = new Set<string>();
   // The latest SHOWN fills, newest first; then in the order asked for. A stable sort keeps fills of the

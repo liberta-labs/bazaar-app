@@ -4,9 +4,11 @@ import { ACTIVE } from "../config/networks";
 import { dayChange } from "../lib/board";
 import { price, shortAddr, signedPct } from "../lib/format";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
+import { IDLE_MINUTES, useActivity } from "../state/activity";
 import { HAS_PROJECT_ID } from "../state/appkit";
 import { useBoard, useNow, useRead, useWallet } from "../state/connection";
 import { useDayStats } from "../state/data";
+import { usePoll } from "../state/poll";
 import { type ThemePref, useTheme } from "../state/theme";
 import { FaucetButton } from "./Faucet";
 import { AssetIcon } from "./AssetIcon";
@@ -154,24 +156,44 @@ function TickerTape() {
   );
 }
 
+/**
+ * After 15 minutes without input, the page stops updating and says so, at the bottom of the screen
+ * where it cannot be missed. Any input (a click, a key, the mouse moving, a scroll) resumes it; the
+ * button is there to make that plain.
+ */
+function PausedBar() {
+  const { idle, resume } = useActivity();
+  if (!idle) return null;
+  return (
+    <div className="paused-bar" role="status">
+      <span>
+        Updates paused after {IDLE_MINUTES} minutes without activity. Prices and positions shown may be out of date.
+      </span>
+      <button className="primary small" onClick={resume}>
+        Resume
+      </button>
+    </div>
+  );
+}
+
 /** Connection health along the bottom: network, live prices, wallet and the chain's head. */
 function StatusBar() {
   const { readBz, error } = useRead();
   const board = useBoard();
   const w = useWallet();
   const now = useNow(2000);
+  const { idle } = useActivity();
   const [block, setBlock] = useState<number | null>(null);
-  useEffect(() => {
-    if (!readBz) return;
-    let dead = false;
-    const tick = () => readBz.ctx.chain.blockNumber().then((b) => !dead && setBlock(b), () => undefined);
-    void tick();
-    const t = setInterval(tick, 5000);
-    return () => {
-      dead = true;
-      clearInterval(t);
-    };
-  }, [readBz]);
+  usePoll(
+    async (isDead) => {
+      if (!readBz) return;
+      const b = await readBz.ctx.chain.blockNumber().catch(() => null);
+      if (b !== null && !isDead()) setBlock(b);
+    },
+    5000,
+    [readBz],
+    Boolean(readBz),
+  );
   const pricesLive = board.fetchedAt !== null && now * 1000 - board.fetchedAt < 30_000;
   return (
     <footer className="status-bar">
@@ -179,7 +201,7 @@ function StatusBar() {
         <i className={`dot-s ${readBz && !error ? "ok" : "bad"}`} /> {ACTIVE.name}
       </span>
       <span className="status">
-        <i className={`dot-s ${pricesLive ? "ok" : "bad"}`} /> {pricesLive ? "Live prices" : "Prices offline"}
+        <i className={`dot-s ${idle ? "warn" : pricesLive ? "ok" : "bad"}`} /> {idle ? "Updates paused" : pricesLive ? "Live prices" : "Prices offline"}
       </span>
       <span className="status">
         <i className={`dot-s ${w.address ? (w.wrongChain ? "warn" : "ok") : "bad"}`} /> {w.address ? (w.wrongChain ? "Wallet on another network" : "Wallet connected") : "Wallet disconnected"}
@@ -251,7 +273,10 @@ export function Layout({ children }: { children: ReactNode }) {
           </NavLink>
         ))}
       </nav>
-      <StatusBar />
+      <div className="bottom-bars">
+        <PausedBar />
+        <StatusBar />
+      </div>
     </div>
   );
 }

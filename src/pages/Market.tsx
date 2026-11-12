@@ -14,6 +14,7 @@ import { GLOSSARY } from "../lib/glossary";
 import { price } from "../lib/format";
 import { useBoard, useMarketInfo, useRead } from "../state/connection";
 import { useLiveAccount, useStablePrices } from "../state/data";
+import { usePageActive } from "../state/activity";
 import { usePoll } from "../state/poll";
 
 const INTERVAL_LABEL: Record<number, string> = { 60: "1m", 300: "5m", 900: "15m", 3600: "1h", 14400: "4h", 86400: "1d" };
@@ -103,11 +104,18 @@ export function MarketPage() {
   const [fills, setFills] = useState<LiveFill[]>([]);
   const { candles, trades, loading: candlesLoading, onTrade } = useCandles(info?.address, interval);
 
-  // Follow the market live: snapshots on events and every 15 s, and the book when it changes.
+  const inUse = usePageActive();
+  // Another market: nothing shown belongs to it.
   useEffect(() => {
     setSnap(undefined);
     setFills([]);
-    if (!readBz || !info) return;
+  }, [readBz, info]);
+
+  // Follow the market live: snapshots on events and every 15 s, and the book when it changes. Stopped
+  // while nobody is using the page, keeping what it showed; started again (a fresh snapshot and book)
+  // when they are back.
+  useEffect(() => {
+    if (!readBz || !info || !inUse) return;
     const h = readBz.live.watchMarket(
       info.address,
       (u) => {
@@ -124,8 +132,10 @@ export function MarketPage() {
       },
       { prices: stable, fetchPrices: false },
     );
+    // The book may have moved while the watch was stopped.
+    setBookVersion((v) => v + 1);
     return () => h.stop();
-  }, [readBz, info, stable, onTrade]);
+  }, [readBz, info, stable, onTrade, inUse]);
 
   const live = info ? prices?.price(info.address) : null;
   const mine = info ? acct.snaps.get(info.address) : undefined;

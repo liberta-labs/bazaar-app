@@ -22,7 +22,9 @@ function useReturn(m: markets.MarketInfo, snap: markets.MarketSnapshot | undefin
   return useAsync(async (): Promise<ReturnEstimate | null> => {
     if (!readBz || !snap) return null;
     const now = Math.floor(Date.now() / 1000);
-    const from = now - RETURN_WINDOW_SECONDS;
+    // On a 5-minute boundary, so everyone looking within the same 5 minutes asks the very same queries
+    // and the service answers them from one cached read. It lengthens a 30-day window by 5 minutes at most.
+    const from = now - (now % 300) - RETURN_WINDOW_SECONDS;
     const trades: history.Trade[] = [];
     let after: string | null = null;
     let complete = true;

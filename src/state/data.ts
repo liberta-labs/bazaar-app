@@ -7,6 +7,7 @@ import { account, type markets } from "@liberta-labs/bazaar-sdk";
 import { type ReactNode, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
 import { useBoard, useRead, useWallet } from "./connection";
+import { usePageActive } from "./activity";
 import { usePoll } from "./poll";
 
 /** A LivePriceView that always reads the latest board, for watchers started once. */
@@ -23,40 +24,33 @@ export function useStablePrices(): markets.LivePriceView {
   );
 }
 
-/** Every market's snapshot, read in one batch and refreshed every 15 seconds. */
+/** Every market's snapshot, read in one batch and refreshed every 15 seconds while the page is in use. */
 export function useMarketSnapshots(): { snaps: ReadonlyMap<Address, markets.MarketSnapshot>; loading: boolean; error: string | null } {
   const { readBz, markets: list } = useRead();
   const prices = useStablePrices();
   const [snaps, setSnaps] = useState<ReadonlyMap<Address, markets.MarketSnapshot>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!readBz || !list.length) return;
-    let dead = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const tick = async () => {
+  usePoll(
+    async (isDead) => {
+      if (!readBz) return;
       try {
         const s = await readBz.markets.marketSnapshots(list, { prices, fetchPrices: false });
-        if (!dead) {
+        if (!isDead()) {
           setSnaps(s);
           setError(null);
         }
       } catch (e) {
         console.error("snapshots", e);
-        if (!dead) setError("Market data is unavailable right now.");
+        if (!isDead()) setError("Market data is unavailable right now.");
       } finally {
-        if (!dead) {
-          setLoading(false);
-          timer = setTimeout(tick, 15_000);
-        }
+        if (!isDead()) setLoading(false);
       }
-    };
-    void tick();
-    return () => {
-      dead = true;
-      clearTimeout(timer);
-    };
-  }, [readBz, list, prices]);
+    },
+    15_000,
+    [readBz, list, prices],
+    Boolean(readBz) && list.length > 0,
+  );
   return { snaps, loading, error };
 }
 
@@ -75,7 +69,8 @@ export const usesMarket = (s: account.AccountSnapshot) =>
 /**
  * The connected account on every market, followed live with watchAccount: a fresh snapshot for each
  * market an event touches, and all of them every 15 seconds. One watch for the whole app, shared
- * through LiveAccountProvider.
+ * through LiveAccountProvider. The watch is stopped while nobody is using the page, keeping what it
+ * showed, and started again (reading every market at once) when they are back.
  */
 function useAccountWatch(): LiveAccount {
   const { readBz, markets: list } = useRead();
@@ -84,11 +79,16 @@ function useAccountWatch(): LiveAccount {
   const [snaps, setSnaps] = useState<ReadonlyMap<Address, account.AccountSnapshot>>(new Map());
   const [loaded, setLoaded] = useState(false);
   const handle = useRef<{ refresh(): void; stop(): void } | null>(null);
+  const inUse = usePageActive();
 
+  // Another account, chain connection or market list: what was shown is no longer this account's.
   useEffect(() => {
     setSnaps(new Map());
     setLoaded(false);
-    if (!readBz || !address || !list.length) return;
+  }, [readBz, address, list]);
+
+  useEffect(() => {
+    if (!readBz || !address || !list.length || !inUse) return;
     const h = readBz.live.watchAccount(
       address,
       list,
@@ -107,7 +107,7 @@ function useAccountWatch(): LiveAccount {
       h.stop();
       handle.current = null;
     };
-  }, [readBz, address, list, prices]);
+  }, [readBz, address, list, prices, inUse]);
 
   return useMemo(() => ({ snaps, loaded, refresh: () => handle.current?.refresh() }), [snaps, loaded]);
 }
@@ -137,15 +137,16 @@ export function useLiveAccount(): LiveAccount {
 export interface DayStats {
   /**
    * The day's first hourly trade candle's open: the 24-hour change's reference only for a market the
-   * price board has no price 24 hours ago for (lib/board.ts `dayChange`).
+   * price board has no price 24 hours ago for (lib/board.ts `dayChange`). Null when the day comes from
+   * the board, which gives the volume alone.
    */
   readonly open: bigint | null;
   readonly volume: bigint;
 }
 
 /**
- * How often the day's stats are read again. Hourly candles move slowly, and the subgraph's query URL
- * is capped: one read per market every minute, from every component that showed the stats, used it up.
+ * How often the page reads the day's stats itself, when the board does not publish them. Hourly candles
+ * move slowly, and every read is a query per market.
  */
 const DAY_STATS_EVERY_MS = 5 * 60_000;
 
@@ -156,13 +157,18 @@ interface DayStatsHub {
 }
 
 /**
- * 24 hours of hourly candles per market: the price 24 h ago and the day's volume. Read once for the
- * whole app, and only while a component on screen needs them and the tab is visible; what was read
+ * Each market's last 24 hours. From the price board when the service reads the chain's history: it
+ * publishes every listing's volume, so the page asks the subgraph for nothing. Otherwise (an older
+ * service, one without a subgraph, or no board at all) from 24 hourly candles per market, read once for
+ * the whole app and only while a component on screen needs them and the tab is visible; what was read
  * stays shown in between.
  */
 function useDayStatsWatch(): DayStatsHub {
   const { readBz, markets: list } = useRead();
-  const [stats, setStats] = useState<ReadonlyMap<Address, DayStats>>(new Map());
+  const { prices, error: boardError } = useBoard();
+  // null until the first board arrives: the page waits for it before asking the subgraph itself.
+  const fromBoard = prices === null ? (boardError === null ? null : false) : prices.subgraph() !== null;
+  const [read, setStats] = useState<ReadonlyMap<Address, DayStats>>(new Map());
   const [wanted, setWanted] = useState(0);
   const want = useCallback(() => {
     setWanted((n) => n + 1);
@@ -189,8 +195,17 @@ function useDayStatsWatch(): DayStatsHub {
     },
     DAY_STATS_EVERY_MS,
     [readBz, list],
-    Boolean(readBz) && list.length > 0 && wanted > 0,
+    Boolean(readBz) && list.length > 0 && wanted > 0 && fromBoard === false,
   );
+  const stats = useMemo(() => {
+    if (!fromBoard || prices === null) return read;
+    const out = new Map<Address, DayStats>();
+    for (const m of list) {
+      const day = prices.day(m.address);
+      if (day) out.set(m.address, { open: null, volume: day.volume });
+    }
+    return out;
+  }, [fromBoard, prices, list, read]);
   return useMemo(() => ({ stats, want }), [stats, want]);
 }
 
@@ -201,9 +216,9 @@ export function DayStatsProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Every market's day stats (empty until read, or while the subgraph is unreachable). `need` false
- * shows what was already read without asking for more reads: the header's ticker, once the price
- * board gives every market its price 24 hours ago, needs nothing from the subgraph.
+ * Every market's day stats (empty until read, or while their source is unreachable). `need` false shows
+ * what is already known without asking the subgraph for more: the header's ticker, once the price board
+ * gives every market its price 24 hours ago, needs nothing else.
  */
 export function useDayStats(need = true): ReadonlyMap<Address, DayStats> {
   const hub = useContext(DayStatsCtx);

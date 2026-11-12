@@ -472,8 +472,16 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 
 /* Status bar */
 .status-bar {
-  position: sticky; bottom: 0; z-index: 15; display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 16px;
   padding: 5px 12px; font-size: 12px; color: var(--muted); background: var(--glass); border-top: 1px solid var(--border);
+}
+/* Shown after 15 minutes without input: updates are paused until the next click, key or scroll. */
+.bottom-bars { position: sticky; bottom: 0; z-index: 15; }
+.paused-bar {
+  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 16px; font-size: 13px; color: var(--text); border-top: 1px solid var(--accent-line);
+  /* The yellow tint over the page's own background: solid, so nothing scrolls through it. */
+  background: linear-gradient(var(--warn-bg), var(--warn-bg)), var(--bg);
 }
 .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .dot-s { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--muted); }
@@ -493,6 +501,8 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
   .t-book { height: 380px; }
   .market-bar { gap: 14px; }
   .status-bar { display: none; }
+  /* Above the phone's bottom navigation, which is fixed. */
+  .paused-bar { position: fixed; left: 0; right: 0; bottom: calc(42px + env(safe-area-inset-bottom)); z-index: 31; }
   .ticker { display: none; }
 }
 

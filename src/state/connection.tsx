@@ -11,12 +11,18 @@ import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDi
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
 import type { Address, Hex } from "viem";
-import { RPC_URL, SERVICE_URL } from "../config/env";
+import { RPC_URL, SERVICE_URL, SUBGRAPH_URL } from "../config/env";
 import { ACTIVE } from "../config/networks";
 import { type Board, BoardPrices, fetchBoard } from "../lib/board";
 import { explain } from "../lib/errors";
 import { RelayService } from "../lib/relay";
+import { appSubgraph } from "../lib/subgraph";
+import { usePageActive } from "./activity";
+import { usePoll } from "./poll";
 import { type AccountKind, type Eip1193, SwitchChainError, canSignRelayed, classifyCode, switchToChain } from "../lib/wallet";
+
+/** History for both connections: through the service, which answers every visitor from one cache. */
+const SUBGRAPH = appSubgraph(SERVICE_URL, ACTIVE.chainId, SUBGRAPH_URL);
 
 // ---------------------------------------------------------------------------------------------
 // Read connection and markets
@@ -36,12 +42,24 @@ function ReadProvider({ children }: { children: ReactNode }) {
   const [list, setList] = useState<readonly markets.MarketInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const inUse = usePageActive();
+
+  // After a failure, try again in 10 seconds, but only while someone is using the page.
+  useEffect(() => {
+    if (!failed || !inUse) return;
+    const t = setTimeout(() => {
+      setFailed(false);
+      setAttempt((a) => a + 1);
+    }, 10_000);
+    return () => clearTimeout(t);
+  }, [failed, inUse]);
 
   useEffect(() => {
     let dead = false;
     (async () => {
       try {
-        const bz = await Bazaar.connect({ transport: RPC_URL, chainId: ACTIVE.chainId });
+        const bz = await Bazaar.connect({ transport: RPC_URL, chainId: ACTIVE.chainId, subgraph: SUBGRAPH });
         if (dead) return;
         setReadBz(bz);
         const ms = await bz.markets.listMarkets();
@@ -53,7 +71,7 @@ function ReadProvider({ children }: { children: ReactNode }) {
         console.error("connect", e);
         if (!dead) {
           setError(`Can't reach ${ACTIVE.name} right now. ${explain(e)}`);
-          setTimeout(() => !dead && setAttempt((a) => a + 1), 10_000);
+          setFailed(true);
         }
       }
     })();
@@ -105,29 +123,22 @@ function BoardProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
-  useEffect(() => {
-    let dead = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const ctl = new AbortController();
-    const tick = async () => {
+  // Paused while nobody is using the page; read at once when they are back, if it fell due meanwhile.
+  usePoll(
+    async (isDead) => {
       try {
-        const b = await fetchBoard(SERVICE_URL, fetch, ctl.signal);
-        if (dead) return;
+        const b = await fetchBoard(SERVICE_URL, fetch, AbortSignal.timeout(BOARD_INTERVAL_MS));
+        if (isDead()) return;
         setBoard(b);
         setError(null);
         setFetchedAt(Date.now());
-      } catch (e) {
-        if (!dead) setError(e instanceof Error && e.name !== "AbortError" ? "Live prices are unavailable right now; showing the last stored prices." : null);
+      } catch {
+        if (!isDead()) setError("Live prices are unavailable right now; showing the last stored prices.");
       }
-      if (!dead) timer = setTimeout(tick, BOARD_INTERVAL_MS);
-    };
-    void tick();
-    return () => {
-      dead = true;
-      ctl.abort();
-      clearTimeout(timer);
-    };
-  }, []);
+    },
+    BOARD_INTERVAL_MS,
+    [],
+  );
 
   const prices = useMemo(() => {
     if (!board) return null;
@@ -259,7 +270,7 @@ function WalletProvider({ children }: { children: ReactNode }) {
     setWalletBz(null);
     if (!walletProvider || !address || chainId !== ACTIVE.chainId) return;
     let dead = false;
-    Bazaar.connect({ transport: walletProvider as never, chainId: ACTIVE.chainId })
+    Bazaar.connect({ transport: walletProvider as never, chainId: ACTIVE.chainId, subgraph: SUBGRAPH })
       .then((bz) => !dead && setWalletBz(bz))
       .catch((e) => {
         console.error("wallet connect", e);

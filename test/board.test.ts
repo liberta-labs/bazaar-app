@@ -176,3 +176,41 @@ describe("dayChange", () => {
     expect(dayChange(100n * E18, 100n * E18)).toEqual({ change: 0n, pct: 0 });
   });
 });
+
+describe("the day's volume and the subgraph's state", () => {
+  const withHistory = () => {
+    const d = doc();
+    d.chains[0] = { ...d.chains[0]!, subgraph: { reachable: true, blocksBehind: 3, secondsBehind: 1, hasIndexingErrors: false, checkedAt: GENERATED - 20 } } as never;
+    d.markets[BTC_FEED]!.listings = [
+      { chainId: 42161, pair: BTC_MAINNET_PAIR, day: { volume: "9000000000000000000", trades: 1 } },
+      { chainId: 421614, pair: BTC_PAIR, day: { volume: "1250000000000000000000", trades: 7 } },
+    ] as never;
+    return d;
+  };
+
+  it("reads each listing's day for its own chain, and each chain's subgraph", () => {
+    const b = parseBoard(withHistory());
+    expect(new BoardPrices(b, 421614).day(BTC_PAIR)).toEqual({ volume: 1_250n * E18, trades: 7 });
+    expect(new BoardPrices(b, 42161).day(BTC_MAINNET_PAIR)).toEqual({ volume: 9n * E18, trades: 1 });
+    // A listing without a day, and a pair of another chain, have none.
+    expect(new BoardPrices(b, 421614).day(AAPL_PAIR)).toBeNull();
+    expect(new BoardPrices(b, 421614).day(BTC_MAINNET_PAIR)).toBeNull();
+    expect(new BoardPrices(b, 421614).subgraph()).toEqual({ reachable: true, blocksBehind: 3, secondsBehind: 1, hasIndexingErrors: false, checkedAt: GENERATED - 20 });
+    expect(new BoardPrices(b, 42161).subgraph()).toBeNull();
+  });
+
+  it("treats a board that publishes neither, or malformed ones, as not knowing", () => {
+    const old = parseBoard(doc());
+    expect(old.subgraphs.size).toBe(0);
+    expect(new BoardPrices(old, 421614).subgraph()).toBeNull();
+    expect(new BoardPrices(old, 421614).day(BTC_PAIR)).toBeNull();
+
+    const d = withHistory();
+    d.chains[0] = { ...d.chains[0]!, subgraph: { reachable: "yes", blocksBehind: -1, secondsBehind: null, checkedAt: null } } as never;
+    d.markets[BTC_FEED]!.listings = [{ chainId: 421614, pair: BTC_PAIR, day: { volume: 12.5, trades: 1 } }] as never;
+    const b = parseBoard(d);
+    expect(new BoardPrices(b, 421614).subgraph()).toEqual({ reachable: false, blocksBehind: null, secondsBehind: null, hasIndexingErrors: false, checkedAt: null });
+    expect(new BoardPrices(b, 421614).day(BTC_PAIR)).toBeNull();
+    expect(parseBoard({ ...doc(), chains: "none" }).subgraphs.size).toBe(0);
+  });
+});

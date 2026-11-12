@@ -1,5 +1,5 @@
 import type { account } from "@liberta-labs/bazaar-sdk";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Address } from "viem";
 import { FaucetButton } from "../components/Faucet";
@@ -12,6 +12,7 @@ import { amount, dateTime, shortDate, signedUsd, usd, usdcUnits } from "../lib/f
 import { claimFeesPart } from "../lib/jobs";
 import { useRead, useWallet } from "../state/connection";
 import { useStablePrices } from "../state/data";
+import { usePoll } from "../state/poll";
 import { useTx } from "../state/tx";
 
 function Totals({ user }: { user: Address }) {
@@ -20,17 +21,16 @@ function Totals({ user }: { user: Address }) {
   const tx = useTx();
   const [p, setP] = useState<account.Portfolio | null>(null);
   const [n, setN] = useState(0);
-  useEffect(() => {
-    if (!readBz) return;
-    let dead = false;
-    const load = () => readBz.account.portfolio(user, undefined, { prices, fetchPrices: false }).then((x) => !dead && setP(x), () => undefined);
-    void load();
-    const t = setInterval(load, 20_000);
-    return () => {
-      dead = true;
-      clearInterval(t);
-    };
-  }, [readBz, user, prices, n]);
+  usePoll(
+    async (isDead) => {
+      if (!readBz) return;
+      const x = await readBz.account.portfolio(user, undefined, { prices, fetchPrices: false }).catch(() => null);
+      if (x && !isDead()) setP(x);
+    },
+    20_000,
+    [readBz, user, prices, n],
+    Boolean(readBz),
+  );
   if (!p) return <Loading what="Reading your accounts" />;
   const t = p.totals;
   const claimable = p.accounts.filter((a) => a.claimableFees > 0n);

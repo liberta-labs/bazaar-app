@@ -1,34 +1,41 @@
 import { useState } from "react";
 import { duration } from "../lib/format";
-import { useRead } from "../state/connection";
+import { historyNotice } from "../lib/subgraph";
+import { useBoard, useRead } from "../state/connection";
 import { usePoll } from "../state/poll";
 
 /**
- * How often the subgraph's lag is checked. A notice a few minutes late does no harm, and each check
- * counts against the subgraph query URL's cap.
+ * How often the page checks the subgraph's lag itself, when the board does not publish it. A notice a
+ * few minutes late does no harm, and each check is a query.
  */
 const LAG_EVERY_MS = 3 * 60_000;
 
-/** "History is N seconds behind" while the subgraph trails the chain. */
+/**
+ * "History is N seconds behind" while the subgraph trails the chain. The service checks every two
+ * minutes and publishes what it found on the board, so the page usually asks nothing. It checks for itself only
+ * with a service that does not read the chain's history, or with no board at all.
+ */
 export function HistoryLag() {
   const { readBz } = useRead();
-  const [text, setText] = useState<string | null>(null);
+  const { prices, error: boardError } = useBoard();
+  const published = prices?.subgraph() ?? null;
+  const [own, setOwn] = useState<string | null>(null);
   usePoll(
     async (isDead) => {
       if (!readBz) return;
       try {
         const l = await readBz.history.subgraphLag();
-        if (isDead()) return;
-        if (l.hasIndexingErrors) setText("History has stopped updating for now; recent activity may be missing.");
-        else if (l.blocksBehind > 20) setText(`History is ${l.secondsBehind !== null ? duration(l.secondsBehind) : `${l.blocksBehind} blocks`} behind; your latest activity may not show yet.`);
-        else setText(null);
+        if (!isDead()) setOwn(historyNotice(l, duration));
       } catch {
-        if (!isDead()) setText("History is unavailable right now.");
+        if (!isDead()) setOwn("History is unavailable right now.");
       }
     },
     LAG_EVERY_MS,
     [readBz],
-    Boolean(readBz),
+    // Wait for the first board before checking: it usually carries the answer.
+    Boolean(readBz) && published === null && (prices !== null || boardError !== null),
   );
+  // Before the service's first check there is nothing to say yet.
+  const text = published === null ? own : published.checkedAt === null ? null : historyNotice(published, duration);
   return text ? <div className="banner warn small">{text}</div> : null;
 }

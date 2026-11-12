@@ -6,6 +6,7 @@ import { MarketsPage } from "./pages/Markets";
 import { PortfolioPage } from "./pages/Portfolio";
 import { ProfilePage } from "./pages/Profile";
 import { ProposalsPage } from "./pages/Proposals";
+import { ActivityProvider } from "./state/activity";
 import { ConnectionProviders } from "./state/connection";
 import { DayStatsProvider, LiveAccountProvider } from "./state/data";
 import { ThemeProvider } from "./state/theme";
@@ -15,6 +16,7 @@ import { TxProvider } from "./state/tx";
 export function App() {
   return (
     <ThemeProvider>
+    <ActivityProvider>
     <ConnectionProviders>
       <LiveAccountProvider>
       <DayStatsProvider>
@@ -37,6 +39,7 @@ export function App() {
       </DayStatsProvider>
       </LiveAccountProvider>
     </ConnectionProviders>
+    </ActivityProvider>
     </ThemeProvider>
   );
 }

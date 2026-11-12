@@ -28,12 +28,36 @@ export interface BoardDayAgo {
   readonly at: number;
 }
 
+/** A listing's trading over the last 24 hours, from the subgraph's hourly candles, read by the service. */
+export interface BoardDay {
+  /** USDC traded, at 18 decimals. */
+  readonly volume: bigint;
+  readonly trades: number;
+}
+
+export interface BoardListing {
+  readonly chainId: number;
+  readonly pair: Address;
+  /** Null when the board does not know it, or is one that does not publish it. */
+  readonly day: BoardDay | null;
+}
+
+/** A chain's subgraph as the service last found it: whether it answers, and how far its history trails the chain. */
+export interface BoardSubgraph {
+  readonly reachable: boolean;
+  readonly blocksBehind: number | null;
+  readonly secondsBehind: number | null;
+  readonly hasIndexingErrors: boolean;
+  /** Unix seconds; null before the service's first check. */
+  readonly checkedAt: number | null;
+}
+
 export interface BoardMarket {
   /** The base feed id, lowercase: the key the board uses. */
   readonly feedId: Hex;
   readonly label: string;
   readonly continuous: boolean;
-  readonly listings: readonly { readonly chainId: number; readonly pair: Address }[];
+  readonly listings: readonly BoardListing[];
   /** Null until Pyth has sent a price for every leg. */
   readonly price: BoardPrice | null;
 }
@@ -43,6 +67,12 @@ export interface Board {
   /** Unix seconds the snapshot was published at. */
   readonly generatedAt: number;
   readonly markets: ReadonlyMap<string, BoardMarket>;
+  /**
+   * Each chain's subgraph, for the chains whose history the service reads: for those it also publishes
+   * each listing's `day` and answers history queries (lib/subgraph.ts). A chain is missing when the
+   * service reads no history for it, or is one that does not publish this.
+   */
+  readonly subgraphs: ReadonlyMap<number, BoardSubgraph>;
 }
 
 /** The board answered something that is not a board. */
@@ -68,6 +98,33 @@ function dayAgoOf(v: unknown): BoardDayAgo | null {
   return spot > 0n ? { spot, at: v.at } : null;
 }
 
+/** A listing's `day`, or null when it is missing or malformed. */
+function dayOf(v: unknown): BoardDay | null {
+  if (!isObj(v) || typeof v.volume !== "string" || !/^\d+$/.test(v.volume)) return null;
+  const trades = typeof v.trades === "number" && Number.isSafeInteger(v.trades) && v.trades >= 0 ? v.trades : 0;
+  return { volume: BigInt(v.volume), trades };
+}
+
+const countOf = (v: unknown): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null);
+
+/** The document's `chains`, as the subgraph of each chain that has one. Anything malformed is left out. */
+function subgraphsOf(chains: unknown): Map<number, BoardSubgraph> {
+  const out = new Map<number, BoardSubgraph>();
+  if (!Array.isArray(chains)) return out;
+  for (const c of chains) {
+    if (!isObj(c) || typeof c.chainId !== "number" || !isObj(c.subgraph)) continue;
+    const s = c.subgraph;
+    out.set(c.chainId, {
+      reachable: s.reachable === true,
+      blocksBehind: countOf(s.blocksBehind),
+      secondsBehind: countOf(s.secondsBehind),
+      hasIndexingErrors: s.hasIndexingErrors === true,
+      checkedAt: countOf(s.checkedAt),
+    });
+  }
+  return out;
+}
+
 /** Parse /board.json. A malformed market is skipped; a malformed document throws BoardError. */
 export function parseBoard(doc: unknown): Board {
   if (!isObj(doc)) throw new BoardError("the board is not a JSON object");
@@ -80,7 +137,9 @@ export function parseBoard(doc: unknown): Board {
       const feedId = key.toLowerCase() as Hex;
       const listings = Array.isArray(raw.listings)
         ? raw.listings.filter(isObj).flatMap((l) =>
-            typeof l.chainId === "number" && typeof l.pair === "string" && /^0x[0-9a-fA-F]{40}$/.test(l.pair) ? [{ chainId: l.chainId, pair: l.pair as Address }] : [],
+            typeof l.chainId === "number" && typeof l.pair === "string" && /^0x[0-9a-fA-F]{40}$/.test(l.pair)
+              ? [{ chainId: l.chainId, pair: l.pair as Address, day: dayOf(l.day) }]
+              : [],
           )
         : [];
       let price: BoardPrice | null = null;
@@ -100,7 +159,7 @@ export function parseBoard(doc: unknown): Board {
       // One bad entry must not hide every other market's price.
     }
   }
-  return { version: typeof doc.version === "number" ? doc.version : 0, generatedAt, markets: out };
+  return { version: typeof doc.version === "number" ? doc.version : 0, generatedAt, markets: out, subgraphs: subgraphsOf(doc.chains) };
 }
 
 /**
@@ -147,6 +206,20 @@ export class BoardPrices implements mk.LivePriceView {
   /** The pair's price about 24 hours ago, from Pyth's history; null when the board has none. */
   dayAgo(pair: Address): bigint | null {
     return this.entry(pair)?.price?.dayAgo?.spot ?? null;
+  }
+
+  /** The pair's trading over the last 24 hours on this chain, as the service read it; null when the board has none. */
+  day(pair: Address): BoardDay | null {
+    const lc = pair.toLowerCase();
+    return this.entry(pair)?.listings.find((l) => l.chainId === this.chainId && l.pair.toLowerCase() === lc)?.day ?? null;
+  }
+
+  /**
+   * This chain's subgraph as the service last found it, or null when the service reads no history for
+   * the chain (or does not publish it): the page then reads the day's stats and the lag itself.
+   */
+  subgraph(): BoardSubgraph | null {
+    return this.board.subgraphs.get(this.chainId) ?? null;
   }
 
   /** The spot alone, for the reads that take a single bigint (insurance quotes and budget). */
