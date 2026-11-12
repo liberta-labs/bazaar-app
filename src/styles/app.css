@@ -1,10 +1,11 @@
 :root {
   /* Inputs and inset boxes: the page colour in dark mode; a near-white in light mode, inside white panels on a beige page. */
   --field: #0a0a0a;
-  /* The test-USDC faucet's buttons: the brand yellow, like the header's. */
-  --faucet: var(--accent);
-  --faucet-hover: var(--accent-hover);
-  --on-faucet: var(--on-accent);
+  /* The test-USDC faucet's buttons: inverted neutral, apart from the brand yellow and the green and
+     red of trading. Near-white on the dark theme; near-black on the light one. */
+  --faucet: #ececec;
+  --faucet-hover: #ffffff;
+  --on-faucet: #0a0a0a;
   --bg: #0a0a0a;
   --panel: #141414;
   --panel-2: #1b1b1b;
@@ -59,6 +60,9 @@
    book, ticket, tables) on a white page; text, muted text, amber, green and red keep at least 4.5:1 on
    every gray. */
 :root[data-theme="light"] {
+  --faucet: #1b1b1b;
+  --faucet-hover: #000000;
+  --on-faucet: #ffffff;
   --bg: #ffffff;
   --field: #ebebed;
   --panel: #f5f5f6;
@@ -105,6 +109,9 @@
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
+    --faucet: #1b1b1b;
+    --faucet-hover: #000000;
+    --on-faucet: #ffffff;
     --bg: #ffffff;
     --field: #ebebed;
     --panel: #f5f5f6;

@@ -11,3 +11,14 @@ dist
 
 # The editor's local history, which can keep copies of .env.
 .history/
+
+# Logs, caches and editor or OS clutter.
+*.log
+npm-debug.log*
+*.tsbuildinfo
+coverage/
+.vite/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

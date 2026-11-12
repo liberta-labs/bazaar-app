@@ -58,7 +58,7 @@ export function FaucetButton({
   // No service faucet and a token without one: nothing to offer.
   if (!ACTIVE.testnet || (!gasless && status && !status.available)) return null;
   const amount = gasless ? offer.amountUsdc : (status?.amountUsdc ?? null);
-  const cls = `${header ? "primary" : `faucet${compact ? " small" : ""}`}${hideOnPhone ? " hide-sm" : ""}`;
+  const cls = `faucet${compact ? " small" : ""}${hideOnPhone ? " hide-sm" : ""}`;
   const label = compact || header
     ? "Get test USDC"
     : `Get ${amount ? usdcUnits(amount) : "10,000"} test USDC`;
