@@ -2,7 +2,7 @@
  * Open positions and open orders, across markets or on one, with every action a trader takes on
  * them: close, take-profit and stop-loss, deposit and withdraw; amend and cancel, one or many.
  */
-import { account, OrderType, orders, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
+import { account, formatUnits18, OrderType, orders, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { explain, inputSentence } from "../lib/errors";
@@ -16,7 +16,9 @@ import { useSort } from "../state/sort";
 import { type TxReview, useTx } from "../state/tx";
 import { AdlMeter, positionAdl } from "./Adl";
 import { CollateralPanel } from "./Collateral";
+import { ExportCsv } from "./ExportCsv";
 import { Modal } from "./Modal";
+import { TableTools } from "./TableTools";
 import { ActionButton, Empty, Pnl, Term, Tip } from "./ui";
 
 const baseOf = (label: string) => label.split("/")[0] ?? "";
@@ -255,11 +257,34 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
   if (!rows.length) return <Empty title="No open positions">Open one from a market's page: pick an amount, buy or sell.</Empty>;
   return (
     <>
-      {rows.length > 1 && (
-        <div className="row" style={{ justifyContent: "flex-end", padding: "8px 10px" }}>
-          <CloseAll rows={rows} />
-        </div>
-      )}
+      <TableTools>
+        {rows.length > 1 && <CloseAll rows={rows} />}
+        <ExportCsv
+          filename="bazaar-positions.csv"
+          rows={sorted}
+          columns={[
+            { header: "market", value: (v) => v.s.market.label },
+            { header: "side", value: (v) => (v.s.position.isLong ? "long" : "short") },
+            { header: "size", value: (v) => formatUnits18(v.s.position.size) },
+            { header: "value_usd", value: (v) => (v.h ? formatUnits18(v.h.notional) : "") },
+            { header: "leverage", value: (v) => v.h?.leverage ?? "" },
+            { header: "entry_price", value: (v) => formatUnits18(v.s.position.entryPrice) },
+            { header: "mark_price", value: (v) => (v.mark > 0n ? formatUnits18(v.mark) : "") },
+            { header: "oracle_price", value: (v) => (v.spot ? formatUnits18(v.spot) : "") },
+            { header: "pnl_usd", value: (v) => (v.h ? formatUnits18(v.h.totalPnl) : "") },
+            { header: "price_pnl_usd", value: (v) => (v.h ? formatUnits18(v.h.unrealizedPnl) : "") },
+            { header: "funding_pnl_usd", value: (v) => (v.h ? formatUnits18(v.h.fundingPnl) : "") },
+            { header: "roe", value: (v) => (v.h && v.s.position.collateral > 0n ? Number((v.h.totalPnl * 1_000_000n) / v.s.position.collateral) / 1_000_000 : "") },
+            { header: "margin_usd", value: (v) => formatUnits18(v.s.position.collateral) },
+            { header: "margin_ratio", value: (v) => v.h?.marginRatio ?? "" },
+            { header: "liquidation_price", value: (v) => (v.liq.price !== null ? formatUnits18(v.liq.price) : "") },
+            { header: "liquidation_distance", value: (v) => v.liq.distance ?? "" },
+            { header: "adl_score", value: (v) => (v.adl ? formatUnits18(v.adl.score) : "") },
+            { header: "take_profit", value: (v) => (v.s.takeProfit ? formatUnits18(v.s.takeProfit.triggerPrice) : "") },
+            { header: "stop_loss", value: (v) => (v.s.stopLoss ? formatUnits18(v.s.stopLoss.triggerPrice) : "") },
+          ]}
+        />
+      </TableTools>
       <div className="table-wrap">
         <table className="rtable">
           <thead>
@@ -466,14 +491,39 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
   const chosen = rows.filter((r) => picked.has(r.key));
   return (
     <>
-      <div className="row" style={{ padding: "8px 10px" }}>
+      <TableTools>
         <button className="small" disabled={!chosen.length} onClick={() => cancel(chosen)}>
           Cancel selected ({chosen.length})
         </button>
         <button className="small ghost" onClick={() => cancel(rows)}>
           Cancel all
         </button>
-      </div>
+        <ExportCsv
+          filename="bazaar-open-orders.csv"
+          rows={sorted}
+          columns={[
+            { header: "market", value: (r) => r.s.market.label },
+            { header: "order_id", value: (r) => String(r.o.orderId) },
+            { header: "type", value: (r) => r.o.typeName },
+            { header: "time_in_force", value: (r) => (r.o.attached ? "closes the position" : (tifText(r.o.typeName, r.o.tif, r.o.isPostOnly) ?? "")) },
+            { header: "side", value: (r) => (r.o.isLong ? "buy" : "sell") },
+            { header: "size_remaining", value: (r) => (r.o.closesWholePosition ? "whole position" : formatUnits18(r.o.remaining)) },
+            { header: "original_size", value: (r) => (r.o.closesWholePosition ? "" : formatUnits18(r.o.size)) },
+            { header: "filled", value: (r) => formatUnits18(r.o.filled) },
+            {
+              header: "order_value_usd",
+              value: (r) => {
+                const v = r.o.closesWholePosition ? null : orderValue(r.o.typeName, r.o.remaining, r.o.limitPrice, r.o.triggerPrice);
+                return v === null ? "" : formatUnits18(v);
+              },
+            },
+            { header: "limit_price", value: (r) => (r.o.limitPrice > 0n ? formatUnits18(r.o.limitPrice) : "market") },
+            { header: "trigger_condition", value: (r) => triggerCondition(r.o.typeName, r.o.isLong, r.o.triggerPrice) ?? "" },
+            { header: "trigger_price", value: (r) => (r.o.triggerPrice > 0n ? formatUnits18(r.o.triggerPrice) : "") },
+            { header: "expiry_block", value: (r) => (r.o.neverExpires ? "never" : String(r.o.expiryBlock)) },
+          ]}
+        />
+      </TableTools>
       <div className="table-wrap">
         <table className="rtable">
           <thead>

@@ -284,6 +284,14 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; 
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); padding: 10px 12px; }
 .tabs button.on { color: var(--accent-text); border-bottom-color: var(--accent-text); }
+/* The account's tabs, with the open table's tools (TableTools.tsx) at the right of the same row. When
+   both don't fit, the tools wrap onto a row of their own under the tabs, with its own rule below it. */
+.tabs-bar { display: flex; flex-wrap: wrap; }
+.tabs-bar > .tabs { flex: 1 1 auto; min-width: 0; }
+.tabs-tools { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.tabs-tools:empty { display: none; }
+.table-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 10px; }
+.table-note { margin: 0; padding: 6px 10px 0; }
 input[type="range"] { accent-color: var(--accent-text); padding: 0; min-height: 24px; border: none; background: transparent; }
 
 /* Tables */
@@ -675,3 +683,16 @@ th.sortable[data-sort="desc"]::after { content: "\25BC\FE0E"; opacity: 1; color:
 .review-section { border-top: 1px solid var(--border); padding: 10px 12px; }
 .review-section h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .review-notes { display: grid; gap: 4px; padding: 2px 2px 0; }
+
+/* Proposals: the How it works guide above each kind of proposal. */
+.how-it-works > summary { cursor: pointer; font-weight: 600; color: var(--strong); }
+.how-it-works[open] > summary { margin-bottom: 8px; }
+.how-it-works ol { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 4px; }
+.how-it-works .kv { margin-bottom: 10px; }
+.how-it-works .kv > :nth-child(even) { font-family: inherit; text-align: left; }
+
+/* Insurance tab: the participation summary above the per-fund table. */
+.insurance-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 12px 10px; border-bottom: 1px solid var(--row-line); }
+.insurance-summary > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.insurance-summary .label { color: var(--muted); font-size: 12px; }
+.insurance-summary b { font-size: 15px; color: var(--strong); overflow-wrap: anywhere; }

@@ -6,8 +6,9 @@
 import { account, type markets } from "@liberta-labs/bazaar-sdk";
 import { type ReactNode, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
+import { reloadIn, settleMs } from "../lib/historySync";
 import { useBoard, useRead, useWallet } from "./connection";
-import { usePageActive } from "./activity";
+import { useActivity, usePageActive } from "./activity";
 import { usePoll } from "./poll";
 
 /** A LivePriceView that always reads the latest board, for watchers started once. */
@@ -60,6 +61,47 @@ export interface LiveAccount {
   readonly loaded: boolean;
   /** Read every market again now (after the user's own transaction lands). */
   readonly refresh: () => void;
+  /**
+   * Goes up once the subgraph should have caught up with the account's latest change on chain (a
+   * fill, an order, a deposit), and when updates resume after a pause. A history table that reloads
+   * when it changes shows what just happened without a Refresh.
+   */
+  readonly historyVersion: number;
+}
+
+/** Whether a live event names `owner` among its arguments: a trade, order, deposit or the like of theirs. */
+function namesAccount(args: object, owner: string): boolean {
+  const me = owner.toLowerCase();
+  return Object.values(args).some((v) => typeof v === "string" && v.toLowerCase() === me);
+}
+
+/**
+ * Counts up when the subgraph should hold what `changes` counted: the board's measure of the
+ * subgraph's trail after the last change (lib/historySync.ts). A resume after a pause counts as a
+ * change, since the watch saw nothing meanwhile.
+ */
+function useHistoryVersion(changes: number): number {
+  const { prices } = useBoard();
+  const { resumes } = useActivity();
+  const lag = useRef<number | null>(null);
+  lag.current = prices?.subgraph()?.secondsBehind ?? null;
+  const since = useRef<number | null>(null);
+  const [version, setVersion] = useState(0);
+  const pending = changes + resumes;
+  useEffect(() => {
+    if (pending === 0) return;
+    const now = performance.now();
+    since.current ??= now;
+    const t = setTimeout(
+      () => {
+        since.current = null;
+        setVersion((v) => v + 1);
+      },
+      reloadIn(now, since.current, settleMs(lag.current)),
+    );
+    return () => clearTimeout(t);
+  }, [pending]);
+  return version;
 }
 
 /** True when the account has anything on the market. */
@@ -78,6 +120,8 @@ function useAccountWatch(): LiveAccount {
   const prices = useStablePrices();
   const [snaps, setSnaps] = useState<ReadonlyMap<Address, account.AccountSnapshot>>(new Map());
   const [loaded, setLoaded] = useState(false);
+  const [changes, setChanges] = useState(0);
+  const historyVersion = useHistoryVersion(changes);
   const handle = useRef<{ refresh(): void; stop(): void } | null>(null);
   const inUse = usePageActive();
 
@@ -93,6 +137,8 @@ function useAccountWatch(): LiveAccount {
       address,
       list,
       (u) => {
+        // The account's own events, not the market-wide ones the watch also passes on.
+        if (u.type === "event" && namesAccount(u.event.args, address)) setChanges((c) => c + 1);
         if (u.type === "account") {
           setSnaps((m) => new Map(m).set(u.snapshot.market.address, u.snapshot));
           if (u.cause === "initial" || u.cause === "manual") setLoaded(true);
@@ -109,7 +155,7 @@ function useAccountWatch(): LiveAccount {
     };
   }, [readBz, address, list, prices, inUse]);
 
-  return useMemo(() => ({ snaps, loaded, refresh: () => handle.current?.refresh() }), [snaps, loaded]);
+  return useMemo(() => ({ snaps, loaded, refresh: () => handle.current?.refresh(), historyVersion }), [snaps, loaded, historyVersion]);
 }
 
 /** A snapshot's health at the board's current price (recomputed on every board tick). */

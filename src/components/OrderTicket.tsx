@@ -316,17 +316,12 @@ export function OrderTicket({
         : null;
   const fillSize = (s: bigint, exact: boolean) => {
     if (!sizingPrice) return;
-    if (exact) {
-      // The exact size, so nothing is left over; the field shows it to six places, in the asset.
-      setUnit("base");
-      setAmountText(toInput((s / 10n ** 12n) * 10n ** 12n, 6));
-      setExactSize(s);
-      return;
-    }
-    setExactSize(null);
-    // Rounded down, so the amount never asks for more than the collateral backs.
+    // In the field's current unit (dollars unless switched), rounded down, so the amount never asks for
+    // more than the collateral backs. A close keeps the exact size behind it, so nothing is left over
+    // whatever the field shows.
     if (unit === "base") setAmountText(toInput((s / 10n ** 12n) * 10n ** 12n, 6));
     else setAmountText(toInput(((s * sizingPrice) / E18 / CENT) * CENT, 2));
+    setExactSize(exact ? s : null);
   };
   const shortfall = preview?.margin.shortfall ?? 0n;
   let deposit = 0n;
@@ -334,11 +329,16 @@ export function OrderTicket({
     // Enough for the chosen leverage. On a flip only the new side needs margin, and everything the
     // closed position leaves (its collateral after the realized P&L and the fees) backs it: so it's the
     // position the order leaves at that leverage, against the collateral it leaves.
+    // A book too thin to fill the order leaves the preview without the flip, so the order's own size
+    // decides it too: past the held position it flips, and the part past it is what opens.
+    const flipIntent = opposite && !!position && size !== null && size !== orders.CLOSE_POSITION && size > position.size;
     const forLeverage =
       (kind === "market" || kind === "limit") && notional > 0n
         ? preview.flips
           ? (preview.after.notional * 10n) / BigInt(lev10) - preview.after.collateral
-          : (notional * 10n) / BigInt(lev10) + preview.fees.total - free
+          : flipIntent && held && sizingPrice
+            ? ((((size! - position!.size) * sizingPrice) / E18) * 10n) / BigInt(lev10) + preview.fees.total - held.equity
+            : (notional * 10n) / BigInt(lev10) + preview.fees.total - free
         : 0n;
     const need = shortfall > forLeverage ? shortfall : forLeverage;
     if (need > 0n) {

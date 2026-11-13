@@ -20,8 +20,9 @@ import {
   uma,
 } from "@liberta-labs/bazaar-sdk";
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type { Address, Hex } from "viem";
+import { HistoryList } from "../components/History";
 import { HistoryLag } from "../components/HistoryLag";
 import { Modal } from "../components/Modal";
 import { Empty, Loading, StatusBadge, Term, Tip, TxLink, useAsync } from "../components/ui";
@@ -30,6 +31,7 @@ import { explain, isKeeperOnly } from "../lib/errors";
 import { STATUS_TEXT } from "../lib/glossary";
 import { amount, dateTime, parseInput, relative, shortAddr } from "../lib/format";
 import { costedPart } from "../lib/jobs";
+import { mergeByTime } from "../lib/mergePages";
 import {
   continuousMismatch,
   descriptionMismatch,
@@ -134,12 +136,144 @@ function AssertionLine({ id, home }: { id: Hex; home: "factory" | "terminator" }
   const s = st.data;
   if (!s) return <span className="small muted">reading UMA…</span>;
   return (
-    <Tip text={uma.ASSERTION_PHASE_TEXT[s.phase]}>
-      <span className="small term">
-        UMA: {s.phase}
-        {s.disputableUntil ? ` · disputable ${relative(s.disputableUntil, s.now)}` : ""}
-      </span>
+    <>
+      <Tip text={uma.ASSERTION_PHASE_TEXT[s.phase]}>
+        <span className="small term">
+          UMA: {s.phase}
+          {s.disputableUntil ? ` · disputable ${relative(s.disputableUntil, s.now)}` : ""}
+        </span>
+      </Tip>
+      {s.phase === "liveness" && s.assertion && <DisputeStake bond={s.assertion.bond} oo={s.assertion.oo} />}
+    </>
+  );
+}
+
+/** UMA's burn share per oracle: it doesn't change between claims, so it's read once. */
+const burnedShare = new Map<string, Promise<bigint | null>>();
+
+/**
+ * What disputing a claim stakes and what it can win: the disputer matches the bond; if UMA's voters side
+ * with them they get both bonds back less the share UMA burns as its fee, and if not, the bond is gone.
+ */
+function DisputeStake({ bond, oo }: { bond: bigint; oo: Address }) {
+  const { readBz } = useRead();
+  const burned = useAsync(async () => {
+    if (!readBz) return null;
+    const k = oo.toLowerCase();
+    if (!burnedShare.has(k)) burnedShare.set(k, readBz.uma.burnedBondPercentage({ oo }).catch(() => null));
+    return burnedShare.get(k)!;
+  }, [readBz, oo]);
+  // An oracle that doesn't report its burn share (the testnet one doesn't) is taken at UMA's standard
+  // half, and the figure is marked as an estimate.
+  const reported = burned.data ?? null;
+  const share = reported ?? UMA_STANDARD_BURN;
+  const back = bond * 2n - (bond * share) / 10n ** 18n;
+  const est = reported === null ? "≈" : "";
+  return (
+    <Tip
+      text={`To dispute, you post a ${uma.usdcText(bond)} bond, matching the proposer's. UMA's voters then decide, which takes a few days. If they side with you, you get ${est}${uma.usdcText(back)} back: your bond plus ${est}${uma.usdcText(back - bond)}, the proposer's bond less UMA's fee. If they side with the proposer, your bond is lost.${reported === null ? " This oracle doesn't report UMA's fee, so the figure assumes UMA's standard fee of half the losing bond." : ""}`}
+    >
+      <div className="small term">
+        Dispute stake {uma.usdcText(bond)} · wins {est}+{uma.usdcText(back - bond)}
+      </div>
     </Tip>
+  );
+}
+
+/** UMA's standard burn on a disputed bond, 1e18 = 100%: half, as the live OOv3 is set. */
+const UMA_STANDARD_BURN = 5n * 10n ** 17n;
+
+// ---------------------------------------------------------------------------------------------
+// How it works
+// ---------------------------------------------------------------------------------------------
+
+const DOCS = "https://docs.bazaar.finance/protocol";
+
+/** What differs between the kinds of proposal: the bond, the window, what UMA checks, where to read more. */
+const GUIDE: Record<ProposalTab, { bond: string; window: string; checks: string; after: string; docs: string }> = {
+  listings: {
+    bond: "At least 1,000 USDC, plus an insurance seed of at least 3,000 USDC that becomes the new market's insurance fund (returned if the listing fails).",
+    window: "48 hours.",
+    checks:
+      "A live Pyth Pro feed for an eligible asset (a company's shares, an FX rate, a commodity, a cryptocurrency, or an ETF holding a broad stock index), the right trading hours, and a description that names that asset. Wording and price moves are never grounds.",
+    after: "The market is deployed with the seed as its insurance fund, and the proposer holds those insurance shares.",
+    docs: `${DOCS}/listing.html`,
+  },
+  terminations: {
+    bond: "At least 1,000 USDC.",
+    window: "12 hours.",
+    checks:
+      "An event that has happened or is scheduled for a fixed date: the asset is delisted, the feed is decommissioned, a structural change (a split, a spinoff, a special dividend over 5%), or a Pyth migration. Price moves are never grounds.",
+    after:
+      "Trading stops at the cutoff and every position settles at Pyth's price then; the proposer earns 0.1% of the insurance fund (up to $100). A market's insurers can also end it by voting: 60% of matured shares.",
+    docs: `${DOCS}/termination.html`,
+  },
+  identifier: {
+    bond: "At least 5,000 USDC.",
+    window: "2 days, then a 7-day timelock before the new identifier takes over.",
+    checks: "The new identifier must be on UMA's whitelist and named ASSERT_TRUTH…: it decides how UMA's voters judge every future listing and termination.",
+    after: "It queues behind the timelock, so anyone who distrusts it has time to leave first; then anyone activates it.",
+    docs: `${DOCS}/listing.html#the-only-governance-swapping-the-uma-identifier`,
+  },
+};
+
+const GUIDE_KEY = "bazaar.proposalsGuide";
+
+/**
+ * The steps every proposal goes through, the specifics for the tab in view, and a link to the docs.
+ * Folded until opened; once opened it stays open on later visits, until folded again.
+ */
+function HowItWorks({ tab }: { tab: ProposalTab }) {
+  const [open] = useState(() => {
+    try {
+      return localStorage.getItem(GUIDE_KEY) === "open";
+    } catch {
+      return false;
+    }
+  });
+  const g = GUIDE[tab];
+  return (
+    <details
+      className="panel how-it-works"
+      open={open}
+      onToggle={(e) => {
+        try {
+          localStorage.setItem(GUIDE_KEY, e.currentTarget.open ? "open" : "closed");
+        } catch {
+          /* storage blocked: it opens again next time */
+        }
+      }}
+    >
+      <summary>How it works</summary>
+      <ol className="small">
+        <li>
+          <b>Propose.</b> Anyone can make a claim to UMA, posting a USDC bond with it.
+        </li>
+        <li>
+          <b>Dispute window.</b> Anyone who can show the claim is false may dispute it by posting the same bond.
+        </li>
+        <li>
+          <b>Not disputed?</b> It passes when the window ends. Anyone can settle it, and the proposer gets their bond back.
+        </li>
+        <li>
+          <b>Disputed?</b> UMA's voters decide, which takes a few days. The winner gets their bond back plus the loser's, less UMA's fee; the loser's bond is gone. Each open
+          proposal shows what a dispute stakes and what it wins.
+        </li>
+      </ol>
+      <div className="kv small">
+        <span>Bond</span>
+        <span>{g.bond}</span>
+        <span>Dispute window</span>
+        <span>{g.window}</span>
+        <span>What's checked</span>
+        <span>{g.checks}</span>
+        <span>If it passes</span>
+        <span>{g.after}</span>
+      </div>
+      <a className="small" href={g.docs} target="_blank" rel="noopener noreferrer">
+        Learn more in the docs ↗
+      </a>
+    </details>
   );
 }
 
@@ -498,11 +632,9 @@ function Listings() {
   const [propose, setPropose] = useState(false);
   const [n, setN] = useState(0);
   const open = useAsync(async () => (readBz ? (await readBz.listings.openListings()).listings : []), [readBz, n]);
-  // The latest proposals, open ones too: one query gives the resolved list and each open listing's
-  // transaction.
-  const recent = useAsync(async () => (readBz ? (await readBz.history.listingProposals({ first: 20 })).items : []), [readBz, n]);
-  const past = (recent.data ?? []).filter((p) => p.status !== "Pending" && p.status !== "Disputed");
-  const txOf = useMemo(() => new Map((recent.data ?? []).map((p) => [p.id.toLowerCase(), p.transactionHash])), [recent.data]);
+  // The open listings' transactions, for their details. The resolved ones page below, however many.
+  const openTx = useAsync(async () => (readBz ? (await readBz.history.listingProposals({ status: ["Pending", "Disputed"], first: 100 })).items : []), [readBz, n]);
+  const txOf = useMemo(() => new Map((openTx.data ?? []).map((p) => [p.id.toLowerCase(), p.transactionHash])), [openTx.data]);
   const refund = useAsync(async () => (readBz && w.address ? readBz.listings.seedRefundOwed(w.address) : 0n), [readBz, w.address, n]);
   const now = Date.now() / 1000;
   const reload = () => setN((x) => x + 1);
@@ -617,39 +749,50 @@ function Listings() {
           </div>
         )}
         <h3>Resolved</h3>
-        {!past.length ? (
-          <p className="small muted">None yet.</p>
+        {!readBz ? (
+          <Loading />
         ) : (
-          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
-            {past.map((p: history.ListingProposal) => (
-              <li key={p.id}>
-                <b>{p.description}</b>: {p.status} {p.resolvedAt ? `(${dateTime(p.resolvedAt)})` : ""}
-                {p.pair && (
+          <HistoryList<history.ListingProposal>
+            deps={[readBz, n]}
+            filename="bazaar-listings.csv"
+            pageSize={PROPOSALS_PAGE}
+            load={(o) => readBz.history.listingProposals({ status: ["Deployed", "Rejected", "Expired", "Voided"], ...o })}
+            empty={{ title: "None yet", text: "Listings show here once UMA settles them." }}
+            columns={[
+              { header: "Proposed", csvHeader: "proposed", cell: (p) => dateTime(p.proposedAt), csv: (p) => new Date(p.proposedAt * 1000).toISOString() },
+              {
+                header: "Asset",
+                csvHeader: "description",
+                cell: (p) => (
                   <>
-                    {" "}
-                    · <Link to={`/market/${p.pair}`}>open market</Link>
+                    <b>{p.description}</b>
+                    <ProposalDetails
+                      txHash={p.transactionHash}
+                      facts={[
+                        { k: "Description", v: p.description },
+                        { k: "Feed", v: <FeedName feedId={p.baseFeedId} /> },
+                        { k: "Outcome", v: p.status },
+                        { k: "Proposed by", v: <Addr a={p.deployer} /> },
+                        { k: "Proposed", v: dateTime(p.proposedAt) },
+                        { k: "Dispute deadline", v: dateTime(p.livenessEndsAt) },
+                        { k: "Disputed", v: yesNo(p.disputed) },
+                        p.resolvedAt !== null && { k: "Resolved", v: dateTime(p.resolvedAt) },
+                        { k: "Insurance seed", v: `${amount(p.seedAmount, 2)} USDC` },
+                        p.seedRefundUsdc !== null && { k: "Seed returned", v: uma.usdcText(p.seedRefundUsdc) },
+                        p.pair && { k: "Market", v: <Addr a={p.pair} /> },
+                        { k: "UMA assertion", v: <Mono>{p.id}</Mono> },
+                      ]}
+                    />
                   </>
-                )}
-                <ProposalDetails
-                  txHash={p.transactionHash}
-                  facts={[
-                    { k: "Description", v: p.description },
-                    { k: "Feed", v: <FeedName feedId={p.baseFeedId} /> },
-                    { k: "Outcome", v: p.status },
-                    { k: "Proposed by", v: <Addr a={p.deployer} /> },
-                    { k: "Proposed", v: dateTime(p.proposedAt) },
-                    { k: "Dispute deadline", v: dateTime(p.livenessEndsAt) },
-                    { k: "Disputed", v: yesNo(p.disputed) },
-                    p.resolvedAt !== null && { k: "Resolved", v: dateTime(p.resolvedAt) },
-                    { k: "Insurance seed", v: `${amount(p.seedAmount, 2)} USDC` },
-                    p.seedRefundUsdc !== null && { k: "Seed returned", v: uma.usdcText(p.seedRefundUsdc) },
-                    p.pair && { k: "Market", v: <Addr a={p.pair} /> },
-                    { k: "UMA assertion", v: <Mono>{p.id}</Mono> },
-                  ]}
-                />
-              </li>
-            ))}
-          </ul>
+                ),
+                csv: (p) => p.description,
+              },
+              { header: "Outcome", csvHeader: "outcome", cell: (p) => p.status, csv: (p) => p.status },
+              { header: "Resolved", csvHeader: "resolved", cell: (p) => (p.resolvedAt ? dateTime(p.resolvedAt) : "–"), csv: (p) => (p.resolvedAt ? new Date(p.resolvedAt * 1000).toISOString() : "") },
+              { header: "Market", csvHeader: "market", cell: (p) => (p.pair ? <Link to={`/market/${p.pair}`}>open market</Link> : <span className="muted">–</span>), csv: (p) => p.pair ?? "" },
+              { header: "", csvHeader: "transaction", cell: (p) => <TxLink hash={p.transactionHash}>tx ↗</TxLink>, csv: (p) => p.transactionHash },
+            ]}
+          />
         )}
       </div>
       {propose && <ProposeListing onClose={() => (setPropose(false), reload())} />}
@@ -952,13 +1095,33 @@ function MarketTermination({
 function Terminations() {
   const { readBz, markets: list } = useRead();
   const { snaps } = useMarketSnapshots();
-  const past = useAsync(async () => {
+  // The open claims' and votes' transactions, for their details in the market panel. The history pages
+  // below, however long it gets.
+  const openTx = useAsync(async () => {
     if (!readBz) return null;
-    const [claims, votes] = await Promise.all([readBz.history.terminationProposals({ first: 20 }), readBz.history.insurerProposals({ first: 20 })]);
+    const [claims, votes] = await Promise.all([
+      readBz.history.terminationProposals({ status: ["Pending", "Disputed"], first: 100 }),
+      readBz.history.insurerProposals({ status: ["Open", "Scheduled"], first: 100 }),
+    ]);
     return { claims: claims.items, votes: votes.items };
   }, [readBz]);
-  const claimTx = useMemo(() => new Map((past.data?.claims ?? []).map((c) => [c.id.toLowerCase(), c.transactionHash])), [past.data]);
-  const voteTx = useMemo(() => new Map((past.data?.votes ?? []).map((v) => [v.id.toLowerCase(), v.transactionHash])), [past.data]);
+  const claimTx = useMemo(() => new Map((openTx.data?.claims ?? []).map((c) => [c.id.toLowerCase(), c.transactionHash])), [openTx.data]);
+  const voteTx = useMemo(() => new Map((openTx.data?.votes ?? []).map((v) => [v.id.toLowerCase(), v.transactionHash])), [openTx.data]);
+  // UMA claims and insurer votes, newest first, as one list a page at a time.
+  const loadHistory = useMemo(() => {
+    if (!readBz) return null;
+    type Opts = { first: number; to?: number };
+    return mergeByTime<TerminationRow>([
+      async (o: Opts) => {
+        const p = await readBz.history.terminationProposals(o);
+        return { next: p.next, items: p.items.map((c): TerminationRow => ({ kind: "claim", c, timestamp: c.submittedAt })) };
+      },
+      async (o: Opts) => {
+        const p = await readBz.history.insurerProposals(o);
+        return { next: p.next, items: p.items.map((v): TerminationRow => ({ kind: "vote", v, timestamp: v.createdAt })) };
+      },
+    ]);
+  }, [readBz]);
   // One market at a time, picked from the list: its state, open claims and votes, and what can be done.
   const [chosen, setChosen] = useState<Address | null>(null);
   const find = (p: Address) => list.find((m) => m.address.toLowerCase() === p.toLowerCase());
@@ -1008,66 +1171,102 @@ function Terminations() {
           </>
         )}
         <h3 style={{ marginTop: 12 }}>History</h3>
-        {!past.data ? (
+        {!loadHistory ? (
           <Loading />
-        ) : !past.data.claims.length && !past.data.votes.length ? (
-          <p className="small muted">No termination has been proposed yet.</p>
         ) : (
-          <ul className="small" style={{ paddingLeft: 18, margin: 0 }}>
-            {past.data.claims.map((c) => (
-              <li key={c.id}>
-                UMA claim on {marketName(c.pair)}: {c.status} · cutoff {dateTime(c.lastTradingTs)} · <span style={{ overflowWrap: "anywhere" }}>{c.reason}</span>
-                <ProposalDetails
-                  txHash={c.transactionHash}
-                  facts={[
-                    { k: "Grounds", v: groundsOf(c.category)?.name ?? `category ${c.category}` },
-                    groundsOf(c.category) && { k: "Which means", v: groundsOf(c.category)!.description },
-                    { k: "Reason", v: <span className="prewrap">{c.reason}</span> },
-                    { k: "Outcome", v: c.status },
-                    { k: "Proposed cutoff", v: dateTime(c.lastTradingTs) },
-                    c.acceptedCutoffTs !== null && { k: "Accepted cutoff", v: dateTime(c.acceptedCutoffTs) },
-                    { k: "Proposed by", v: <Addr a={c.proposer} /> },
-                    { k: "Proposed", v: dateTime(c.submittedAt) },
-                    { k: "Dispute deadline", v: dateTime(c.livenessEndsAt) },
-                    { k: "Disputed", v: yesNo(c.disputed) },
-                    c.resolvedAt !== null && { k: "Resolved", v: dateTime(c.resolvedAt) },
-                    { k: "Market", v: <Addr a={c.pair} /> },
-                    { k: "UMA assertion", v: <Mono>{c.id}</Mono> },
-                  ]}
-                />
-              </li>
-            ))}
-            {past.data.votes.map((v) => {
-              const verdict = v.outcome ? term.OUTCOME_NAMES[v.outcome] : undefined;
-              return (
-                <li key={v.id}>
-                  Insurer vote on {marketName(v.pair)}: {v.status} · cutoff {dateTime(v.cutoffTs)}
-                  <ProposalDetails
-                    txHash={v.transactionHash}
-                    facts={[
-                      { k: "Kind", v: v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote" },
-                      { k: "Outcome", v: v.status },
-                      { k: "Cutoff", v: dateTime(v.cutoffTs) },
-                      { k: "Voting opened", v: dateTime(v.windowOpenTs) },
-                      { k: "Yes votes", v: `${amount(v.yesShares, 4)} shares` },
-                      v.snapshotTotalShares !== null && { k: "Shares at the snapshot", v: amount(v.snapshotTotalShares, 4) },
-                      v.thresholdMet !== null && { k: "Reached 60%", v: yesNo(v.thresholdMet) },
-                      verdict && verdict !== "none" && { k: "For yes-voters", v: term.OUTCOME_TEXT[verdict] },
-                      v.levyBp !== null && { k: "Levy", v: `${(Number(v.levyBp) / 100).toFixed(2)}%` },
-                      { k: "Proposed by", v: <Addr a={v.proposer} /> },
-                      { k: "Proposed", v: dateTime(v.createdAt) },
-                      v.resolvedAt !== null && { k: "Resolved", v: dateTime(v.resolvedAt) },
-                      { k: "Market", v: <Addr a={v.pair} /> },
-                      { k: v.claimBacked ? "UMA assertion" : "Vote id", v: <Mono>{v.id}</Mono> },
-                    ]}
-                  />
-                </li>
-              );
-            })}
-          </ul>
+          <HistoryList<TerminationRow>
+            deps={[loadHistory]}
+            filename="bazaar-terminations.csv"
+            pageSize={PROPOSALS_PAGE}
+            load={loadHistory}
+            empty={{ title: "No termination has been proposed yet" }}
+            columns={[
+              { header: "Proposed", csvHeader: "proposed", cell: (r) => dateTime(r.timestamp), csv: (r) => new Date(r.timestamp * 1000).toISOString() },
+              {
+                header: "Market",
+                csvHeader: "market",
+                cell: (r) => marketName(r.kind === "claim" ? r.c.pair : r.v.pair),
+                csv: (r) => find(r.kind === "claim" ? r.c.pair : r.v.pair)?.label ?? (r.kind === "claim" ? r.c.pair : r.v.pair),
+              },
+              { header: "Kind", csvHeader: "kind", cell: (r) => (r.kind === "claim" ? "UMA claim" : "Insurer vote"), csv: (r) => (r.kind === "claim" ? "uma claim" : "insurer vote") },
+              { header: "Outcome", csvHeader: "outcome", cell: (r) => (r.kind === "claim" ? r.c.status : r.v.status), csv: (r) => (r.kind === "claim" ? r.c.status : r.v.status) },
+              {
+                header: "Cutoff",
+                csvHeader: "cutoff",
+                cell: (r) => dateTime(r.kind === "claim" ? r.c.lastTradingTs : r.v.cutoffTs),
+                csv: (r) => new Date((r.kind === "claim" ? r.c.lastTradingTs : r.v.cutoffTs) * 1000).toISOString(),
+              },
+              {
+                header: "Details",
+                csvHeader: "reason",
+                cell: (r) => (r.kind === "claim" ? <ClaimDetails c={r.c} /> : <VoteDetails v={r.v} />),
+                csv: (r) => (r.kind === "claim" ? r.c.reason : r.v.claimBacked ? "opened by a UMA claim" : "insurers' own vote"),
+              },
+              { header: "", csvHeader: "transaction", cell: (r) => <TxLink hash={r.kind === "claim" ? r.c.transactionHash : r.v.transactionHash}>tx ↗</TxLink>, csv: (r) => (r.kind === "claim" ? r.c.transactionHash : r.v.transactionHash) },
+            ]}
+          />
         )}
       </div>
     </section>
+  );
+}
+
+/** One row of the termination history: a UMA claim or an insurer vote, by when it was proposed. */
+type TerminationRow = { readonly kind: "claim"; readonly c: history.TerminationProposal; readonly timestamp: number } | { readonly kind: "vote"; readonly v: history.InsurerProposal; readonly timestamp: number };
+
+function ClaimDetails({ c }: { c: history.TerminationProposal }) {
+  return (
+    <>
+      <span className="small" style={{ overflowWrap: "anywhere" }}>
+        {c.reason}
+      </span>
+      <ProposalDetails
+        txHash={c.transactionHash}
+        facts={[
+          { k: "Grounds", v: groundsOf(c.category)?.name ?? `category ${c.category}` },
+          groundsOf(c.category) && { k: "Which means", v: groundsOf(c.category)!.description },
+          { k: "Reason", v: <span className="prewrap">{c.reason}</span> },
+          { k: "Outcome", v: c.status },
+          { k: "Proposed cutoff", v: dateTime(c.lastTradingTs) },
+          c.acceptedCutoffTs !== null && { k: "Accepted cutoff", v: dateTime(c.acceptedCutoffTs) },
+          { k: "Proposed by", v: <Addr a={c.proposer} /> },
+          { k: "Proposed", v: dateTime(c.submittedAt) },
+          { k: "Dispute deadline", v: dateTime(c.livenessEndsAt) },
+          { k: "Disputed", v: yesNo(c.disputed) },
+          c.resolvedAt !== null && { k: "Resolved", v: dateTime(c.resolvedAt) },
+          { k: "Market", v: <Addr a={c.pair} /> },
+          { k: "UMA assertion", v: <Mono>{c.id}</Mono> },
+        ]}
+      />
+    </>
+  );
+}
+
+function VoteDetails({ v }: { v: history.InsurerProposal }) {
+  const verdict = v.outcome ? term.OUTCOME_NAMES[v.outcome] : undefined;
+  return (
+    <>
+      <span className="small muted">{v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote"}</span>
+      <ProposalDetails
+        txHash={v.transactionHash}
+        facts={[
+          { k: "Kind", v: v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote" },
+          { k: "Outcome", v: v.status },
+          { k: "Cutoff", v: dateTime(v.cutoffTs) },
+          { k: "Voting opened", v: dateTime(v.windowOpenTs) },
+          { k: "Yes votes", v: `${amount(v.yesShares, 4)} shares` },
+          v.snapshotTotalShares !== null && { k: "Shares at the snapshot", v: amount(v.snapshotTotalShares, 4) },
+          v.thresholdMet !== null && { k: "Reached 60%", v: yesNo(v.thresholdMet) },
+          verdict && verdict !== "none" && { k: "For yes-voters", v: term.OUTCOME_TEXT[verdict] },
+          v.levyBp !== null && { k: "Levy", v: `${(Number(v.levyBp) / 100).toFixed(2)}%` },
+          { k: "Proposed by", v: <Addr a={v.proposer} /> },
+          { k: "Proposed", v: dateTime(v.createdAt) },
+          v.resolvedAt !== null && { k: "Resolved", v: dateTime(v.resolvedAt) },
+          { k: "Market", v: <Addr a={v.pair} /> },
+          { k: v.claimBacked ? "UMA assertion" : "Vote id", v: <Mono>{v.id}</Mono> },
+        ]}
+      />
+    </>
   );
 }
 
@@ -1083,8 +1282,9 @@ function Identifier() {
   const [propose, setPropose] = useState(false);
   const [id, setId] = useState("");
   const g = useAsync(async () => (readBz ? readBz.governance.identifierGovernance() : null), [readBz, n]);
-  const past = useAsync(async () => (readBz ? (await readBz.history.identifierUpgradeProposals({ first: 10 })).items : []), [readBz, n]);
-  const txOf = useMemo(() => new Map((past.data ?? []).map((p) => [p.id.toLowerCase(), p.transactionHash])), [past.data]);
+  // The pending and queued proposals' transactions, for their details. The history pages below.
+  const openTx = useAsync(async () => (readBz ? (await readBz.history.identifierUpgradeProposals({ status: ["Pending", "Disputed", "Queued"], first: 20 })).items : []), [readBz, n]);
+  const txOf = useMemo(() => new Map((openTx.data ?? []).map((p) => [p.id.toLowerCase(), p.transactionHash])), [openTx.data]);
   const reload = () => setN((x) => x + 1);
   const s = g.data;
   const idText = (id: Hex) => uma.identifierText(id) ?? id;
@@ -1123,6 +1323,7 @@ function Identifier() {
                   )}
                   {s.pending.assertion.phase === "liveness" && (
                     <div>
+                      <AssertionLine id={s.pending.assertionId} home="factory" />
                       <button className="small" onClick={() => void costed.run("Dispute upgrade", (bz, user) => bz.uma.disputeAssertion({ assertionId: s.pending!.assertionId, from: user, home: "factory" }), reload)}>
                         Dispute
                       </button>
@@ -1191,32 +1392,48 @@ function Identifier() {
             ]}
           />
         )}
-        {past.data && past.data.length > 0 && (
-          <>
-            <h3>History</h3>
-            <ul className="small" style={{ paddingLeft: 18, margin: 0 }}>
-              {past.data.map((p) => (
-                <li key={p.id}>
-                  {idText(p.newIdentifier)}: {p.status} ({dateTime(p.proposedAt)})
-                  <ProposalDetails
-                    txHash={p.transactionHash}
-                    facts={[
-                      { k: "New identifier", v: idText(p.newIdentifier) },
-                      p.oldIdentifier !== null && { k: "Replacing", v: idText(p.oldIdentifier) },
-                      { k: "Outcome", v: p.status },
-                      { k: "Proposed by", v: <Addr a={p.proposer} /> },
-                      { k: "Proposed", v: dateTime(p.proposedAt) },
-                      { k: "Dispute deadline", v: dateTime(p.livenessEndsAt) },
-                      { k: "Disputed", v: yesNo(p.disputed) },
-                      p.effectiveTs !== null && { k: "Timelock ends", v: dateTime(p.effectiveTs) },
-                      p.resolvedAt !== null && { k: "Resolved", v: dateTime(p.resolvedAt) },
-                      { k: "UMA assertion", v: <Mono>{p.id}</Mono> },
-                    ]}
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
+        <h3>History</h3>
+        {!readBz ? (
+          <Loading />
+        ) : (
+          <HistoryList<history.IdentifierUpgradeProposal>
+            deps={[readBz, n]}
+            filename="bazaar-identifier-upgrades.csv"
+            pageSize={PROPOSALS_PAGE}
+            load={(o) => readBz.history.identifierUpgradeProposals(o)}
+            empty={{ title: "No upgrade has been proposed yet" }}
+            columns={[
+              { header: "Proposed", csvHeader: "proposed", cell: (p) => dateTime(p.proposedAt), csv: (p) => new Date(p.proposedAt * 1000).toISOString() },
+              {
+                header: "New identifier",
+                csvHeader: "new_identifier",
+                cell: (p) => (
+                  <>
+                    {idText(p.newIdentifier)}
+                    <ProposalDetails
+                      txHash={p.transactionHash}
+                      facts={[
+                        { k: "New identifier", v: idText(p.newIdentifier) },
+                        p.oldIdentifier !== null && { k: "Replacing", v: idText(p.oldIdentifier) },
+                        { k: "Outcome", v: p.status },
+                        { k: "Proposed by", v: <Addr a={p.proposer} /> },
+                        { k: "Proposed", v: dateTime(p.proposedAt) },
+                        { k: "Dispute deadline", v: dateTime(p.livenessEndsAt) },
+                        { k: "Disputed", v: yesNo(p.disputed) },
+                        p.effectiveTs !== null && { k: "Timelock ends", v: dateTime(p.effectiveTs) },
+                        p.resolvedAt !== null && { k: "Resolved", v: dateTime(p.resolvedAt) },
+                        { k: "UMA assertion", v: <Mono>{p.id}</Mono> },
+                      ]}
+                    />
+                  </>
+                ),
+                csv: (p) => idText(p.newIdentifier),
+              },
+              { header: "Outcome", csvHeader: "outcome", cell: (p) => p.status, csv: (p) => p.status },
+              { header: "Resolved", csvHeader: "resolved", cell: (p) => (p.resolvedAt ? dateTime(p.resolvedAt) : "–"), csv: (p) => (p.resolvedAt ? new Date(p.resolvedAt * 1000).toISOString() : "") },
+              { header: "", csvHeader: "transaction", cell: (p) => <TxLink hash={p.transactionHash}>tx ↗</TxLink>, csv: (p) => p.transactionHash },
+            ]}
+          />
         )}
       </div>
       {propose && (
@@ -1238,7 +1455,21 @@ function Identifier() {
   );
 }
 
+/** Rows each proposal history shows before Load more. */
+const PROPOSALS_PAGE = 10;
+
+type ProposalTab = "listings" | "terminations" | "identifier";
+const PROPOSAL_TABS: { id: ProposalTab; label: string }[] = [
+  { id: "listings", label: "Market listings" },
+  { id: "terminations", label: "Terminations" },
+  { id: "identifier", label: "UMA identifier" },
+];
+
 export function ProposalsPage() {
+  // One kind of proposal at a time. The tab rides in the address (#/proposals?tab=terminations), so it
+  // can be linked to and Back returns to it; Market listings is the default.
+  const [params, setParams] = useSearchParams();
+  const tab = PROPOSAL_TABS.find((t) => t.id === params.get("tab"))?.id ?? "listings";
   return (
     <div className="stack">
       <div className="hero">
@@ -1249,9 +1480,15 @@ export function ProposalsPage() {
         </p>
       </div>
       <HistoryLag />
-      <Listings />
-      <Terminations />
-      <Identifier />
+      <div className="tabs" role="tablist" aria-label="Kind of proposal">
+        {PROPOSAL_TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "on" : ""} onClick={() => setParams(t.id === "listings" ? {} : { tab: t.id })}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <HowItWorks tab={tab} />
+      {tab === "listings" ? <Listings /> : tab === "terminations" ? <Terminations /> : <Identifier />}
     </div>
   );
 }

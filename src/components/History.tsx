@@ -1,10 +1,12 @@
 /** A paginated history list from the subgraph, with CSV export of every page. */
 import type { history } from "@liberta-labs/bazaar-sdk";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { explain } from "../lib/errors";
+import { reloadSize } from "../lib/historySync";
 import { downloadCsv, toCsv } from "../lib/csv";
 import type { SortValue } from "../lib/sort";
 import { useSort } from "../state/sort";
+import { TableTools } from "./TableTools";
 import { Empty, Loading } from "./ui";
 
 export interface HistoryColumn<T> {
@@ -41,30 +43,46 @@ export function HistoryList<T>({
   empty,
   filename,
   deps,
+  pageSize = PAGE,
+  refreshKey,
 }: {
   load: (opts: { first: number; after: string | null }) => Promise<history.Page<T>>;
   columns: readonly HistoryColumn<T>[];
   empty: { title: string; text?: string };
   filename: string;
   deps: readonly unknown[];
+  /** Rows a page shows before Load more (50 unless set). */
+  pageSize?: number;
+  /**
+   * When this changes, the list reloads in place: the same number of rows it shows, with no spinner,
+   * keeping what it had if the reload fails. The account's tables pass `historyVersion`, so what the
+   * user just did shows up on its own.
+   */
+  refreshKey?: unknown;
 }) {
   const [rows, setRows] = useState<T[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Each read that replaces the rows takes a new number; a page that lands after one is dropped.
+  const generation = useRef(0);
+  const shown = useRef(0);
+  shown.current = rows.length;
 
   const first = useCallback(async () => {
+    const g = ++generation.current;
     setLoading(true);
     try {
-      const p = await load({ first: PAGE, after: null });
+      const p = await load({ first: pageSize, after: null });
+      if (g !== generation.current) return;
       setRows(p.items);
       setNext(p.next);
       setError(null);
     } catch (e) {
-      setError(explain(e));
+      if (g === generation.current) setError(explain(e));
     } finally {
-      setLoading(false);
+      if (g === generation.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
@@ -73,17 +91,40 @@ export function HistoryList<T>({
     void first();
   }, [first]);
 
+  // A reload asked for by `refreshKey`; not on mount, where `first` has just read.
+  const keyAtMount = useRef(refreshKey);
+  useEffect(() => {
+    if (Object.is(refreshKey, keyAtMount.current)) return;
+    keyAtMount.current = refreshKey;
+    const g = ++generation.current;
+    load({ first: reloadSize(shown.current, pageSize), after: null })
+      .then((p) => {
+        if (g !== generation.current) return;
+        setRows(p.items);
+        setNext(p.next);
+        setError(null);
+        setLoading(false);
+      })
+      .catch(() => {
+        // Keep what is shown; Refresh is there to try again.
+        if (g === generation.current) setLoading(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
   const more = async () => {
     if (!next) return;
+    const g = generation.current;
     setLoading(true);
     try {
-      const p = await load({ first: PAGE, after: next });
+      const p = await load({ first: pageSize, after: next });
+      if (g !== generation.current) return;
       setRows((r) => [...r, ...p.items]);
       setNext(p.next);
     } catch (e) {
-      setError(explain(e));
+      if (g === generation.current) setError(explain(e));
     } finally {
-      setLoading(false);
+      if (g === generation.current) setLoading(false);
     }
   };
 
@@ -116,16 +157,16 @@ export function HistoryList<T>({
   if (!rows.length) return <Empty title={empty.title}>{empty.text}</Empty>;
   return (
     <>
-      <div className="row" style={{ justifyContent: "flex-end", padding: "8px 10px" }}>
-        {/* Sorting orders what has loaded; a page loaded later joins the same order. */}
-        {sorting && next && <span className="small muted grow">Sorted within the {rows.length} rows loaded. Load more to include older ones.</span>}
+      <TableTools>
         <button className="small" onClick={() => void exportAll()} disabled={exporting}>
           {exporting ? "Exporting…" : "Export CSV"}
         </button>
         <button className="small ghost" onClick={() => void first()}>
           Refresh
         </button>
-      </div>
+      </TableTools>
+      {/* Sorting orders what has loaded; a page loaded later joins the same order. */}
+      {sorting && next && <p className="small muted table-note">Sorted within the {rows.length} rows loaded. Load more to include older ones.</p>}
       <div className="table-wrap">
         <table>
           <thead>

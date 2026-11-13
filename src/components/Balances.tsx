@@ -2,7 +2,7 @@
  * Every place the account's money sits, one row each: the wallet's USDC, each market's collateral, each
  * insurance stake and each market's claimable fees, with what can be done there.
  */
-import { account, fromUsdcUnits, type markets } from "@liberta-labs/bazaar-sdk";
+import { account, formatUnits18, fromUsdcUnits, type markets } from "@liberta-labs/bazaar-sdk";
 import { type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Address } from "viem";
@@ -13,7 +13,9 @@ import { useInsuranceStakes } from "../state/insurance";
 import { useTx } from "../state/tx";
 import { AssetIcon } from "./AssetIcon";
 import { CollateralPanel } from "./Collateral";
+import { ExportCsv } from "./ExportCsv";
 import { Modal } from "./Modal";
+import { TableTools } from "./TableTools";
 import { useSort } from "../state/sort";
 import { ActionButton, Empty, Pnl, Term, Tip } from "./ui";
 
@@ -172,7 +174,7 @@ export function BalancesTable({ snaps }: { snaps: readonly account.AccountSnapsh
   if (!rows.length) return <Empty title="Nothing here yet">Get test USDC, then deposit on a market to trade or insure it.</Empty>;
   return (
     <>
-      <div className="spread" style={{ padding: "8px 10px" }}>
+      <TableTools>
         <span className="small muted">
           Total value <b className="mono">{usd(total)}</b>
           {stakes.loading && !stakes.data ? " (reading insurance…)" : ""}
@@ -180,7 +182,22 @@ export function BalancesTable({ snaps }: { snaps: readonly account.AccountSnapsh
         <label className="check small">
           <input type="checkbox" checked={hideSmall} onChange={(e) => setHideSmall(e.target.checked)} /> Hide balances under $1
         </label>
-      </div>
+        <ExportCsv
+          filename="bazaar-balances.csv"
+          rows={shown}
+          columns={[
+            { header: "asset", value: (r) => r.name },
+            { header: "type", value: (r) => r.type.toLowerCase() },
+            // Shares for an insurance stake, US dollars for the rest.
+            { header: "total", value: (r) => formatUnits18(r.totalAmount) },
+            { header: "total_unit", value: (r) => (r.type === "Insurance" ? "shares" : "usd") },
+            { header: "available", value: (r) => (r.availableAmount === null ? "" : formatUnits18(r.availableAmount)) },
+            { header: "value_usd", value: (r) => formatUnits18(r.value) },
+            { header: "pnl_usd", value: (r) => (r.pnl ? formatUnits18(r.pnl.amount) : "") },
+            { header: "roe", value: (r) => (r.pnl && r.pnl.base > 0n ? Number((r.pnl.amount * 1_000_000n) / r.pnl.base) / 1_000_000 : "") },
+          ]}
+        />
+      </TableTools>
       <div className="table-wrap">
         <table className="rtable">
           <thead>

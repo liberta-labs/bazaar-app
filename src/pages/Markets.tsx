@@ -142,12 +142,18 @@ export function MarketsPage() {
                               <span className="badge">trading hours</span>
                             </Tip>
                           )}
+                          {s?.venueClosed === true && (
+                            <Tip text={GLOSSARY.venueClosed}>
+                              <span className="badge warn">venue closed</span>
+                            </Tip>
+                          )}
                         </div>
                       </td>
                       <td className="num">
-                        {spot !== null ? price(spot) : "–"}
-                        <div>
-                          <PriceAge publishTime={live?.publishTime ?? stored?.updateTs ?? null} confidenceOk={prices?.confidenceOk(m.address)} venueClosed={s?.venueClosed === true} stored={!live && !!stored} />
+                        {/* The price's warnings sit on its line, left of it, so the row stays one line. A closed venue shows beside the market's name instead. */}
+                        <div className="row" style={{ gap: 14, justifyContent: "flex-end" }}>
+                          <PriceAge publishTime={live?.publishTime ?? stored?.updateTs ?? null} confidenceOk={prices?.confidenceOk(m.address)} stored={!live && !!stored} />
+                          <span>{spot !== null ? price(spot) : "–"}</span>
                         </div>
                       </td>
                       <td className={`num ${change === null ? "" : change >= 0 ? "up" : "down"}`}>{change === null ? "–" : signedPct(change)}</td>

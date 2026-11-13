@@ -9,6 +9,8 @@ import type { Address, Hex } from "viem";
 import { OrdersTable, PositionsTable } from "./AccountTables";
 import { BalancesTable } from "./Balances";
 import { type HistoryColumn, HistoryList } from "./History";
+import { InsuranceStats } from "./InsuranceStats";
+import { TableTools, TableToolsSlot } from "./TableTools";
 import { Empty, Loading, Pnl, Term, TxLink } from "./ui";
 import { amount, dateTime, price, signedUsd, usd } from "../lib/format";
 import { type FundingPayment, fundingPayments, txPairKey } from "../lib/fundingHistory";
@@ -18,7 +20,7 @@ import { type TradeRow, tradeRows } from "../lib/tradeRows";
 import { useRead, useWallet } from "../state/connection";
 import { useLiveAccount, usesMarket } from "../state/data";
 
-export type Tab = "balances" | "positions" | "orders" | "trades" | "funding" | "orderHistory" | "orderEvents" | "activity";
+export type Tab = "balances" | "positions" | "orders" | "trades" | "funding" | "orderHistory" | "orderEvents" | "activity" | "insurance";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "balances", label: "Balances" },
@@ -29,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "orderHistory", label: "Order history" },
   { id: "orderEvents", label: "Order activity" },
   { id: "activity", label: "Account activity" },
+  { id: "insurance", label: "Insurance" },
 ];
 
 const TYPE_TEXT: Record<string, string> = { Market: "Market", Limit: "Limit", StopLimit: "Stop-limit", TakeProfit: "Take-profit", StopLoss: "Stop-loss" };
@@ -56,17 +59,19 @@ function useCommonColumns() {
 }
 
 function TradeHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
+  const { historyVersion } = useLiveAccount();
   const { label, time, market, tx } = useCommonColumns();
   const [grouped, setGrouped] = useState(true);
   return (
     <>
-      <div className="row" style={{ padding: "8px 10px 0" }}>
+      <TableTools>
         <label className="check small">
           <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} /> Group fills by order
         </label>
-      </div>
+      </TableTools>
       <HistoryList<TradeRow>
         deps={[readBz, user, grouped]}
+        refreshKey={historyVersion}
         filename="bazaar-trades.csv"
         load={async (o) => {
           const p = await readBz.history.trades({ account: user, ...o });
@@ -122,6 +127,7 @@ function TradeHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
 
 /** Every funding payment, worked out from the account's position snapshots (lib/fundingHistory.ts). */
 function FundingHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
+  const { historyVersion } = useLiveAccount();
   const { label, time, market, tx } = useCommonColumns();
   const load = useMemo(() => {
     let all: Promise<FundingPayment[]> | null = null;
@@ -156,6 +162,7 @@ function FundingHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
       </p>
       <HistoryList<FundingPayment>
         deps={[load]}
+        refreshKey={historyVersion}
         filename="bazaar-funding.csv"
         load={load}
         empty={{ title: "No funding settled yet", text: "It settles when you reduce or close a position." }}
@@ -183,10 +190,12 @@ function FundingHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
 }
 
 function OrderHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
+  const { historyVersion } = useLiveAccount();
   const { market } = useCommonColumns();
   return (
     <HistoryList<history.HistoryOrder>
       deps={[readBz, user]}
+      refreshKey={historyVersion}
       filename="bazaar-orders.csv"
       load={(o) => readBz.history.orders({ account: user, ...o })}
       empty={{ title: "No orders yet" }}
@@ -274,6 +283,7 @@ const INSURANCE_TEXT: Record<history.InsuranceEventKind, string> = {
 };
 
 function AccountActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
+  const { historyVersion } = useLiveAccount();
   const { label, time, market, tx } = useCommonColumns();
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const load = useMemo(() => {
@@ -348,15 +358,18 @@ function AccountActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
   }, [readBz, user, filter, label]);
   return (
     <>
-      <div className="row" style={{ padding: "8px 10px 0", gap: 4 }}>
-        {ACTIVITY_FILTERS.map((f) => (
-          <button key={f.id} className={`chip${filter === f.id ? " on" : ""}`} onClick={() => setFilter(f.id)} aria-pressed={filter === f.id}>
-            {f.label}
-          </button>
-        ))}
-      </div>
+      <TableTools>
+        <div className="row" style={{ gap: 4 }}>
+          {ACTIVITY_FILTERS.map((f) => (
+            <button key={f.id} className={`chip${filter === f.id ? " on" : ""}`} onClick={() => setFilter(f.id)} aria-pressed={filter === f.id}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </TableTools>
       <HistoryList<Activity>
         deps={[load]}
+        refreshKey={historyVersion}
         filename="bazaar-account-activity.csv"
         load={load}
         empty={{ title: "Nothing here yet", text: "Deposits, withdrawals, insurance, claims, liquidations and auto-deleveraging show here." }}
@@ -374,10 +387,12 @@ function AccountActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
 }
 
 function OrderActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
+  const { historyVersion } = useLiveAccount();
   const { time, market, tx } = useCommonColumns();
   return (
     <HistoryList<history.OrderEvent>
       deps={[readBz, user]}
+      refreshKey={historyVersion}
       filename="bazaar-order-activity.csv"
       load={(o) => readBz.history.orderEvents({ account: user, ...o })}
       empty={{ title: "No order activity yet" }}
@@ -414,6 +429,13 @@ function History({ tab, user }: { tab: Tab; user: Address }) {
       return <OrderActivity readBz={readBz} user={user} />;
     case "activity":
       return <AccountActivity readBz={readBz} user={user} />;
+    case "insurance":
+      // A summary and three tables, each with its own tools: they stay above their tables.
+      return (
+        <TableToolsSlot.Provider value={null}>
+          <InsuranceStats readBz={readBz} user={user} />
+        </TableToolsSlot.Provider>
+      );
     default:
       return null;
   }
@@ -428,16 +450,22 @@ export function AccountTabs({ className = "panel tight", defaultTab = "positions
   const all = useMemo(() => [...acct.snaps.values()].sort((a, b) => a.market.index - b.market.index), [acct.snaps]);
   const openOrders = used.reduce((n, s) => n + s.orders.length, 0);
   const openPositions = used.filter((s) => s.hasPosition).length;
+  // The open table's tools render into this slot, on the tab bar's row.
+  const [tools, setTools] = useState<HTMLElement | null>(null);
   return (
     <section className={className}>
-      <div className="tabs" role="tablist">
-        {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)} role="tab" aria-selected={tab === t.id}>
-            {t.label}
-            {t.id === "positions" && openPositions ? ` (${openPositions})` : t.id === "orders" && openOrders ? ` (${openOrders})` : ""}
-          </button>
-        ))}
+      <div className="tabs-bar">
+        <div className="tabs" role="tablist">
+          {TABS.map((t) => (
+            <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)} role="tab" aria-selected={tab === t.id}>
+              {t.label}
+              {t.id === "positions" && openPositions ? ` (${openPositions})` : t.id === "orders" && openOrders ? ` (${openOrders})` : ""}
+            </button>
+          ))}
+        </div>
+        <div className="tabs-tools" ref={setTools} />
       </div>
+      <TableToolsSlot.Provider value={tools}>
       {!w.address ? (
         <Empty title="Connect a wallet to see your balances, positions, orders and history" action={<button className="primary" onClick={w.openConnect}>Connect wallet</button>} />
       ) : tab === "balances" ? (
@@ -449,6 +477,7 @@ export function AccountTabs({ className = "panel tight", defaultTab = "positions
       ) : (
         <History tab={tab} user={w.address} />
       )}
+      </TableToolsSlot.Provider>
     </section>
   );
 }
