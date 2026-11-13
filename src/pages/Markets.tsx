@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FaucetButton } from "../components/Faucet";
 import { AssetIcon } from "../components/AssetIcon";
+import { NetworkHelpLink } from "../components/NetworkHelp";
 import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { Empty, Loading, PriceAge, StatusBadge, Term, Tip } from "../components/ui";
 import { ACTIVE } from "../config/networks";
@@ -28,8 +29,26 @@ function GettingStarted() {
   const traded = [...acct.snaps.values()].some((s) => s.hasPosition || s.orders.length > 0);
   if (w.address && deposited && traded) return null;
   const first = list[0];
+  const onNetwork = !!w.address && !w.wrongChain;
   const steps = [
-    { done: !!w.address, title: "Connect a wallet", text: "MetaMask, Rabby or any browser wallet, or a phone wallet by QR code.", action: !w.address && <button className="primary small" onClick={w.openConnect}>Connect</button> },
+    {
+      done: onNetwork,
+      title: "Connect a wallet",
+      text: `MetaMask, Rabby or any browser wallet, or a phone wallet by QR code. It needs to be on the ${ACTIVE.name} network.`,
+      action: !w.address ? (
+        <button className="primary small" onClick={w.openConnect}>
+          Connect
+        </button>
+      ) : (
+        w.wrongChain && (
+          <button className="primary small" onClick={() => w.ensureChain().catch(() => undefined)}>
+            Switch to {ACTIVE.name}
+          </button>
+        )
+      ),
+      // Shown once done too, so a guide open when the switch lands stays open to say so.
+      help: <NetworkHelpLink />,
+    },
     ...(ACTIVE.testnet
       ? [{ done: (usdc ?? 0n) > 0n || deposited, title: "Get test USDC", text: "Free test dollars to try Bazaar with. They have no real value.", action: w.address && <FaucetButton compact />, help: <TestUsdcHelpLink /> }]
       : []),
