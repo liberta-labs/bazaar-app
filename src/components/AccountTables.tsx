@@ -8,9 +8,13 @@ import { Link } from "react-router-dom";
 import { explain, inputSentence } from "../lib/errors";
 import { amount, leverage, parseInput, pct, price, signedUsd, toInput, usd } from "../lib/format";
 import { amendPart, cancelPart, closeOrder, forAccount, orderPart } from "../lib/jobs";
+import { orderValue, tifText, triggerCondition } from "../lib/orderText";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
 import { useBoard, useRead, useWallet } from "../state/connection";
-import { useTx } from "../state/tx";
+import { useMarketSnapshots } from "../state/data";
+import { useSort } from "../state/sort";
+import { type TxReview, useTx } from "../state/tx";
+import { AdlMeter, positionAdl } from "./Adl";
 import { CollateralPanel } from "./Collateral";
 import { Modal } from "./Modal";
 import { ActionButton, Empty, Pnl, Term, Tip } from "./ui";
@@ -23,6 +27,31 @@ export function liquidation(s: account.AccountSnapshot, spot: bigint | null): { 
   const liq = previews.liquidationPrice(s.position, s.state.projectedFundingIndex, { imrBp: s.state.imrBp, mmrBp: s.state.mmrBp, laggedMmrBp: s.state.laggedMmrBp });
   if (liq === null || !spot || spot === 0n) return { price: liq, distance: null };
   return { price: liq, distance: Math.abs(toNumber18(spot - liq) / toNumber18(spot)) };
+}
+
+/** The confirmation for closing a whole position at market. */
+function closeReview(s: account.AccountSnapshot, spot: bigint | null, pnl: bigint): TxReview {
+  return {
+    side: s.position.isLong ? "sell" : "buy",
+    action: `${s.position.isLong ? "Sell" : "Buy"} ${amount(s.position.size)} ${baseOf(s.market.label)}`,
+    detail: `At market, about ${spot ? price(spot) : "–"}: closes your ${s.position.isLong ? "long" : "short"}`,
+    sections: [
+      {
+        title: "Order",
+        rows: [
+          { label: "Estimated P&L", value: <Pnl value={pnl}>{signedUsd(pnl)} before fees</Pnl> },
+          { label: "Fills within", value: "1% of the oracle price" },
+        ],
+      },
+      {
+        title: "After this order",
+        rows: [
+          { label: "Position", value: "none, fully closed" },
+          { label: "Collateral", value: `stays on ${s.market.label}` },
+        ],
+      },
+    ],
+  };
 }
 
 function ClosePosition({ s }: { s: account.AccountSnapshot }) {
@@ -48,13 +77,8 @@ function ClosePosition({ s }: { s: account.AccountSnapshot }) {
         readBz &&
         void tx.run({
           title: `Close ${s.market.label} position`,
-          summary: [
-            <b key="m">
-              {s.position.isLong ? "Sell" : "Buy"} {amount(s.position.size)} {baseOf(s.market.label)} at market (about {spot ? price(spot) : "–"}), closing your {s.position.isLong ? "long" : "short"}.
-            </b>,
-            `Estimated profit and loss: ${signedUsd(pnl)}, before fees. Fills at most 1% from the oracle price.`,
-            "Your collateral stays on the market; withdraw it afterwards if you like.",
-          ],
+          summary: [],
+          review: closeReview(s, spot, pnl),
           pair: s.market.address,
           parts: [orderPart(readBz, s.market.address, closeOrder(s.position.isLong, s.position.size), null, "Close position")],
         })
@@ -161,44 +185,118 @@ function TpSlDialog({ s, onClose }: { s: account.AccountSnapshot; onClose: () =>
   );
 }
 
+/** Closes every open position at market, one request per market; markets that refuse market orders now are left out and named. */
+function CloseAll({ rows }: { rows: readonly account.AccountSnapshot[] }) {
+  const tx = useTx();
+  const w = useWallet();
+  const { readBz } = useRead();
+  const { prices } = useBoard();
+  const open = rows.filter((s) => !s.flags.marketOrdersDisabled);
+  const held = rows.filter((s) => s.flags.marketOrdersDisabled);
+  const reason = !w.canSign ? CONTRACT_WALLET_REASON : !open.length ? "Market orders are paused on every market you hold right now." : null;
+  return (
+    <ActionButton
+      className="small"
+      disabledReason={reason}
+      onClick={() => {
+        if (!readBz) return;
+        for (const s of open) {
+          void tx.run({
+            title: `Close ${s.market.label} position`,
+            summary: held.length ? [`Not closed now (market orders paused): ${held.map((x) => x.market.label).join(", ")}.`] : [],
+            review: (() => {
+              const live = prices?.price(s.market.address) ?? null;
+              const pnl = (live ? account.accountHealth(s, live) : s.health)?.totalPnl ?? 0n;
+              return closeReview(s, live?.spot ?? s.price?.spot ?? null, pnl);
+            })(),
+            pair: s.market.address,
+            parts: [orderPart(readBz, s.market.address, closeOrder(s.position.isLong, s.position.size), null, "Close position")],
+          });
+        }
+      }}
+    >
+      Close all ({open.length})
+    </ActionButton>
+  );
+}
+
+/** A TP/SL's trigger, or a dash. */
+const trigger = (o: account.AccountOrder | null) => (o && o.triggerPrice > 0n ? price(o.triggerPrice) : "–");
+
 export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps: readonly account.AccountSnapshot[]; showMarket?: boolean; onChanged?: () => void }) {
   const { prices } = useBoard();
+  const { snaps: marketSnaps } = useMarketSnapshots();
   const w = useWallet();
   const [dialog, setDialog] = useState<null | { kind: "tpsl" | "deposit" | "withdraw"; s: account.AccountSnapshot }>(null);
   const rows = snaps.filter((s) => s.hasPosition);
+  // Each position with what its columns show, worked out once for both the cells and the sort.
+  const view = rows.map((s) => {
+    const live = prices?.price(s.market.address);
+    const h = live ? account.accountHealth(s, live) : s.health;
+    const spot = live?.spot ?? s.price?.spot ?? null;
+    const mark = marketSnaps.get(s.market.address)?.markPrice ?? 0n;
+    return { s, h, spot, mark, liq: liquidation(s, spot), adl: positionAdl(s, h) };
+  });
+  const { sorted, th } = useSort(view, {
+    market: (v) => v.s.market.label,
+    side: (v) => (v.s.position.isLong ? "Long" : "Short"),
+    size: (v) => v.s.position.size,
+    value: (v) => v.h?.notional,
+    entry: (v) => v.s.position.entryPrice,
+    mark: (v) => (v.mark > 0n ? v.mark : null),
+    pnl: (v) => v.h?.totalPnl,
+    margin: (v) => v.s.position.collateral,
+    funding: (v) => v.h?.fundingPnl,
+    // How far the price is from liquidation, which compares across markets where the price itself doesn't.
+    liquidation: (v) => v.liq.distance,
+    adl: (v) => v.adl?.score,
+    tpsl: (v) => v.s.takeProfit?.triggerPrice ?? v.s.stopLoss?.triggerPrice ?? null,
+  });
   if (!rows.length) return <Empty title="No open positions">Open one from a market's page: pick an amount, buy or sell.</Empty>;
   return (
     <>
+      {rows.length > 1 && (
+        <div className="row" style={{ justifyContent: "flex-end", padding: "8px 10px" }}>
+          <CloseAll rows={rows} />
+        </div>
+      )}
       <div className="table-wrap">
         <table className="rtable">
           <thead>
             <tr>
-              {showMarket && <th>Market</th>}
-              <th>Side</th>
-              <th className="num">Size</th>
-              <th className="num">Entry</th>
-              <th className="num">
-                <Term t="oracle">Price</Term>
+              {showMarket && <th {...th("market")}>Market</th>}
+              <th {...th("side")}>Side</th>
+              <th {...th("size", "num")}>Size</th>
+              <th {...th("value", "num")}>Value</th>
+              <th {...th("entry", "num")}>Entry</th>
+              <th {...th("mark", "num")}>
+                <Term t="mark">Mark</Term>
               </th>
-              <th className="num">
-                <Term t="unrealized">Profit / loss</Term>
+              <th {...th("pnl", "num")}>
+                <Term t="unrealized">P&L (ROE %)</Term>
               </th>
-              <th className="num">
-                <Term t="marginRatio">Margin ratio</Term>
+              <th {...th("margin", "num")}>
+                <Term t="margin">Margin</Term>
               </th>
-              <th className="num">
+              <th {...th("funding", "num")}>
+                <Term t="fundingPnl">Funding</Term>
+              </th>
+              <th {...th("liquidation", "num")}>
                 <Term t="liquidationPrice">Liquidation</Term>
+              </th>
+              <th {...th("adl", "num")}>
+                <Term t="adl">ADL</Term>
+              </th>
+              <th {...th("tpsl", "num")}>
+                <Term t="takeProfit">TP / SL</Term>
               </th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((s) => {
-              const live = prices?.price(s.market.address);
-              const h = live ? account.accountHealth(s, live) : s.health;
-              const spot = live?.spot ?? s.price?.spot ?? null;
-              const liq = liquidation(s, spot);
+            {sorted.map(({ s, h, spot, mark, liq }) => {
               const risky = h && h.marginRatio < 1.5;
+              const collateral = s.position.collateral;
               return (
                 <tr key={s.market.address}>
                   {showMarket && (
@@ -212,26 +310,43 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
                   </td>
                   <td data-label="Size" className="num">
                     {amount(s.position.size)} {baseOf(s.market.label)}
-                    <div className="small muted">{h ? usd(h.notional) : ""}</div>
                   </td>
+                  <td data-label="Value" className="num">{h ? usd(h.notional) : "–"}</td>
                   <td data-label="Entry" className="num">{price(s.position.entryPrice)}</td>
-                  <td data-label="Price" className="num">{spot ? price(spot) : "–"}</td>
-                  <td data-label="Profit / loss" className="num">
+                  <td data-label="Mark" className="num">
+                    {mark > 0n ? price(mark) : "–"}
+                    <div className="small muted">oracle {spot ? price(spot) : "–"}</div>
+                  </td>
+                  <td data-label="P&L (ROE %)" className="num">
                     {h ? (
                       <>
                         <Pnl value={h.totalPnl}>{signedUsd(h.totalPnl)}</Pnl>
-                        <div className="small muted">
-                          price <Pnl value={h.unrealizedPnl}>{signedUsd(h.unrealizedPnl)}</Pnl> · funding <Pnl value={h.fundingPnl}>{signedUsd(h.fundingPnl)}</Pnl>
-                        </div>
+                        {collateral > 0n && (
+                          <div className="small">
+                            <Pnl value={h.totalPnl}>{pct(Number((h.totalPnl * 10_000n) / collateral) / 10_000, 1)}</Pnl>
+                          </div>
+                        )}
                       </>
                     ) : (
                       "–"
                     )}
                   </td>
-                  <td data-label="Margin ratio" className={`num ${risky ? "down" : ""}`}>{h ? h.marginRatio.toFixed(2) : "–"}</td>
+                  <td data-label="Margin" className="num">
+                    {usd(collateral)}
+                    <div className={`small ${risky ? "down" : "muted"}`}>{h ? `ratio ${h.marginRatio.toFixed(2)}` : ""}</div>
+                  </td>
+                  <td data-label="Funding" className="num">{h ? <Pnl value={h.fundingPnl}>{signedUsd(h.fundingPnl)}</Pnl> : "–"}</td>
                   <td data-label="Liquidation" className="num">
                     {liq.price !== null ? price(liq.price) : "none"}
                     {liq.distance !== null && <div className={`small ${liq.distance < 0.05 ? "down" : "muted"}`}>{pct(liq.distance, 1)} away</div>}
+                  </td>
+                  <td data-label="ADL rank" className="num">
+                    <AdlMeter risk={positionAdl(s, h)} />
+                  </td>
+                  <td data-label="TP / SL" className="num">
+                    <span className={s.takeProfit ? "up" : "muted"}>{trigger(s.takeProfit)}</span>
+                    <span className="muted"> / </span>
+                    <span className={s.stopLoss ? "down" : "muted"}>{trigger(s.stopLoss)}</span>
                   </td>
                   <td data-actions="">
                     <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
@@ -314,6 +429,20 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [amend, setAmend] = useState<null | { s: account.AccountSnapshot; o: account.AccountOrder }>(null);
   const rows = useMemo(() => snaps.flatMap((s) => s.orders.map((o) => ({ s, o, key: `${s.market.address}-${o.orderId}` }))), [snaps]);
+  const { sorted, th } = useSort(rows, {
+    market: (r) => r.s.market.label,
+    type: (r) => TYPE_TEXT[r.o.typeName] ?? r.o.typeName,
+    side: (r) => (r.o.isLong ? "Buy" : "Sell"),
+    size: (r) => (r.o.closesWholePosition ? null : r.o.remaining),
+    original: (r) => (r.o.closesWholePosition ? null : r.o.size),
+    value: (r) => (r.o.closesWholePosition ? null : orderValue(r.o.typeName, r.o.remaining, r.o.limitPrice, r.o.triggerPrice)),
+    price: (r) => (r.o.limitPrice > 0n ? r.o.limitPrice : null),
+    trigger: (r) => (triggerCondition(r.o.typeName, r.o.isLong, r.o.triggerPrice) ? r.o.triggerPrice : null),
+    filled: (r) => (r.o.size > 0n && !r.o.closesWholePosition ? toNumber18(r.o.filled) / toNumber18(r.o.size) : null),
+    // Never-expiring orders last when soonest-first, first when latest-first.
+    expires: (r) => (r.o.neverExpires ? Number.MAX_SAFE_INTEGER : r.o.blocksLeft),
+    order: (r) => r.o.orderId,
+  });
   if (!rows.length) return <Empty title="No open orders">Limit, stop and take-profit orders you place show here until they fill.</Empty>;
 
   const cancel = (list: typeof rows) => {
@@ -358,19 +487,22 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
                   onChange={(e) => setPicked(new Set(e.target.checked ? rows.map((r) => r.key) : []))}
                 />
               </th>
-              {showMarket && <th>Market</th>}
-              <th>Type</th>
-              <th>Side</th>
-              <th className="num">Size</th>
-              <th className="num">Price</th>
-              <th className="num">Trigger</th>
-              <th className="num">Filled</th>
-              <th className="num hide-sm">Expires</th>
+              {showMarket && <th {...th("market")}>Market</th>}
+              <th {...th("type")}>Type</th>
+              <th {...th("side")}>Side</th>
+              <th {...th("size", "num")}>Size</th>
+              <th {...th("original", "num")}>Original size</th>
+              <th {...th("value", "num")}>Order value</th>
+              <th {...th("price", "num")}>Price</th>
+              <th {...th("trigger", "num")}>Trigger condition</th>
+              <th {...th("filled", "num")}>Filled</th>
+              <th {...th("expires", "num hide-sm")}>Expires</th>
+              <th {...th("order", "num hide-sm")}>Order</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ s, o, key }) => (
+            {sorted.map(({ s, o, key }) => (
               <tr key={key}>
                 <td data-select="">
                   <input
@@ -393,14 +525,20 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
                 )}
                 <td data-label="Type">
                   {TYPE_TEXT[o.typeName] ?? o.typeName}
-                  {o.isPostOnly && <span className="small muted"> post-only</span>}
+                  <div className="small muted">{o.attached ? "closes the position" : tifText(o.typeName, o.tif, o.isPostOnly)}</div>
                 </td>
                 <td data-label="Side" className={o.isLong ? "up" : "down"}>{o.isLong ? "Buy" : "Sell"}</td>
                 <td data-label="Size" className="num">{o.closesWholePosition ? "whole position" : `${amount(o.remaining)} ${baseOf(s.market.label)}`}</td>
+                <td data-label="Original size" className="num">{o.closesWholePosition ? "–" : amount(o.size)}</td>
+                <td data-label="Order value" className="num">{(() => {
+                  const v = o.closesWholePosition ? null : orderValue(o.typeName, o.remaining, o.limitPrice, o.triggerPrice);
+                  return v === null ? "–" : usd(v);
+                })()}</td>
                 <td data-label="Price" className="num">{o.limitPrice > 0n ? price(o.limitPrice) : "market"}</td>
-                <td data-label="Trigger" className="num">{o.triggerPrice > 0n ? price(o.triggerPrice) : "–"}</td>
+                <td data-label="Trigger condition" className="num">{triggerCondition(o.typeName, o.isLong, o.triggerPrice) ?? "–"}</td>
                 <td data-label="Filled" className="num">{o.size > 0n && !o.closesWholePosition ? pct(toNumber18(o.filled) / toNumber18(o.size), 0) : "–"}</td>
                 <td data-label="Expires" className="num hide-sm">{o.neverExpires ? "never" : o.blocksLeft !== null ? <Tip text={`Arbitrum block ${o.expiryBlock}`}><span>in {formatBlocks(o.blocksLeft)}</span></Tip> : "–"}</td>
+                <td data-label="Order" className="num hide-sm muted">#{String(o.orderId)}</td>
                 <td data-actions="">
                   <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
                     {o.orderType === OrderType.Limit && o.tif === 0 && (

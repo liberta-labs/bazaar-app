@@ -1,8 +1,8 @@
 /**
  * What icon a market gets, from its Pyth symbol ("Crypto.SOL/USD", "Equity.US.ORCL/USD", "FX.USD/CAD",
- * "Metal.XAU/USD", "Commodities.UKOILSPOT/USD"): a coin's own logo for crypto, a generic symbol for
- * everything else (stocks, FX, metals, energy and other commodities, rates), and the ticker's first
- * letter when nothing is known. Company logos are deliberately not used.
+ * "Metal.XAU/USD", "Commodities.UKOILSPOT/USD"): a coin's own logo for crypto, the company's logo for a
+ * stock that has one (lib/stockLogoData.ts), a generic symbol for everything else (other stocks, FX,
+ * metals, energy and other commodities, rates), and the ticker's first letter when nothing is known.
  */
 
 export type AssetKind = "crypto" | "stock" | "fx" | "metal" | "energy" | "commodity" | "rates" | "unknown";
@@ -50,6 +50,24 @@ export function assetIconSpec(symbol: string | undefined, label: string): AssetI
   if (kind === "commodity" && METALS.test(ticker)) kind = "metal";
   else if (kind === "commodity" && ENERGY.test(ticker)) kind = "energy";
   return { kind, ticker, quote: kind === "fx" ? quote : null };
+}
+
+/**
+ * How a company logo sits on its tile: the brand colour as the tile, the mark in white or, on a light
+ * colour, near-black. A tile close to black or white also gets an outline, so it stays visible on a
+ * page of either theme.
+ */
+export function logoColors(hex: string): { tile: string; ink: string; outlined: boolean } {
+  const h = /^#?([0-9a-f]{6})$/i.exec(hex.trim())?.[1] ?? "5B6472";
+  const channel = (i: number) => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  // Relative luminance (WCAG), and whichever ink contrasts more with it: white, or #111 (luminance 0.0056).
+  const l = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+  const onWhite = 1.05 / (l + 0.05);
+  const onDark = (l + 0.05) / 0.0556;
+  return { tile: `#${h.toUpperCase()}`, ink: onWhite >= onDark ? "#FFFFFF" : "#111111", outlined: l < 0.02 || l > 0.85 };
 }
 
 /** A metal's colour: gold, silver, platinum, copper. */

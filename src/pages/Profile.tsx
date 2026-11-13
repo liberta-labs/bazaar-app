@@ -1,189 +1,12 @@
-import type { account } from "@liberta-labs/bazaar-sdk";
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Address } from "viem";
 import { FaucetButton } from "../components/Faucet";
 import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { HistoryLag } from "../components/HistoryLag";
-import { PnlChart } from "../components/PnlChart";
-import { ActionButton, Empty, Loading, Pnl, Term, useAsync } from "../components/ui";
+import { Empty, useAsync } from "../components/ui";
 import { addressUrl } from "../config/networks";
-import { amount, dateTime, shortDate, signedUsd, usd, usdcUnits } from "../lib/format";
-import { claimFeesPart } from "../lib/jobs";
+import { amount, dateTime, usd } from "../lib/format";
 import { useRead, useWallet } from "../state/connection";
-import { useStablePrices } from "../state/data";
-import { usePoll } from "../state/poll";
-import { useTx } from "../state/tx";
-
-function Totals({ user }: { user: Address }) {
-  const { readBz } = useRead();
-  const prices = useStablePrices();
-  const tx = useTx();
-  const [p, setP] = useState<account.Portfolio | null>(null);
-  const [n, setN] = useState(0);
-  usePoll(
-    async (isDead) => {
-      if (!readBz) return;
-      const x = await readBz.account.portfolio(user, undefined, { prices, fetchPrices: false }).catch(() => null);
-      if (x && !isDead()) setP(x);
-    },
-    20_000,
-    [readBz, user, prices, n],
-    Boolean(readBz),
-  );
-  if (!p) return <Loading what="Reading your accounts" />;
-  const t = p.totals;
-  const claimable = p.accounts.filter((a) => a.claimableFees > 0n);
-  return (
-    <>
-      <div className="cards">
-        <div className="stat">
-          <div className="label">Wallet USDC</div>
-          <div className="value">{usdcUnits(p.walletUsdc)}</div>
-        </div>
-        <div className="stat">
-          <div className="label">
-            <Term t="collateral">Collateral</Term> (all markets)
-          </div>
-          <div className="value">{usd(t.collateral)}</div>
-        </div>
-        <div className="stat">
-          <div className="label">
-            <Term t="equity">Equity</Term>
-          </div>
-          <div className="value">{usd(t.equity)}</div>
-        </div>
-        <div className="stat">
-          <div className="label">
-            <Term t="unrealized">Unrealized P&L</Term>
-          </div>
-          <div className="value">
-            <Pnl value={t.unrealizedPnl}>{signedUsd(t.unrealizedPnl)}</Pnl>
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">
-            <Term t="fundingPnl">Funding P&L</Term>
-          </div>
-          <div className="value">
-            <Pnl value={t.fundingPnl}>{signedUsd(t.fundingPnl)}</Pnl>
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">Withdrawable now</div>
-          <div className="value">{usd(t.maxWithdrawable)}</div>
-        </div>
-      </div>
-      <section className="panel" style={{ marginTop: 12 }}>
-        <div className="spread">
-          <h2 style={{ margin: 0 }}>
-            <Term t="claimable">Claimable</Term>: {usd(t.claimableFees)}
-          </h2>
-        </div>
-        {claimable.length === 0 ? (
-          <p className="small muted" style={{ marginTop: 8 }}>
-            Nothing to claim. Refunded trigger bounties and rewards collect here.
-          </p>
-        ) : (
-          <div className="table-wrap" style={{ marginTop: 8 }}>
-            <table>
-              <tbody>
-                {claimable.map((a) => (
-                  <tr key={a.market.address}>
-                    <td>{a.market.label}</td>
-                    <td className="num">{usd(a.claimableFees)}</td>
-                    <td className="right">
-                      <ActionButton
-                        className="small"
-                        onClick={() =>
-                          void tx.run({
-                            title: `Claim on ${a.market.label}`,
-                            summary: [`Send ${usd(a.claimableFees)} you're owed on ${a.market.label} to your wallet.`, "Sent from your wallet: it needs a little ETH for gas."],
-                            parts: [claimFeesPart(a.market.address)],
-                            onDone: () => setN((x) => x + 1),
-                          })
-                        }
-                      >
-                        Claim
-                      </ActionButton>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
-  );
-}
-
-function PnlHistory({ user }: { user: Address }) {
-  const { readBz } = useRead();
-  const [table, setTable] = useState(false);
-  const from = Math.floor(Date.now() / 1000) - 90 * 86_400;
-  const days = useAsync(async () => (readBz ? (await readBz.history.accountDayData(user, { from, first: 1000 })).items : []), [readBz, user]);
-  const stats = useAsync(async () => (readBz ? readBz.history.accountStats(user) : null), [readBz, user]);
-  const rows = (days.data ?? []).map((d) => ({ date: d.date, pnl: d.realizedPnl }));
-  const s = stats.data;
-  return (
-    <div className="two-col">
-      <section className="panel">
-        <div className="spread">
-          <h2 style={{ margin: 0 }}>Realized profit & loss, last 90 days</h2>
-          <button className="small ghost" onClick={() => setTable((x) => !x)}>
-            {table ? "Chart" : "Table"}
-          </button>
-        </div>
-        {days.loading && !days.data ? (
-          <Loading />
-        ) : !rows.length ? (
-          <Empty title="No closed trades yet">Profit and loss shows here once you reduce or close a position.</Empty>
-        ) : table ? (
-          <div className="table-wrap" style={{ maxHeight: 220 }}>
-            <table>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.date}>
-                    <td>{shortDate(r.date)}</td>
-                    <td className="num">
-                      <Pnl value={r.pnl}>{signedUsd(r.pnl)}</Pnl>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <PnlChart days={rows} />
-        )}
-      </section>
-      <section className="panel">
-        <h2>Lifetime</h2>
-        {!s ? (
-          stats.loading ? <Loading /> : <Empty title="No activity yet" />
-        ) : (
-          <div className="kv">
-            <span>Trades</span>
-            <span>{s.tradeCount}</span>
-            <span>Volume</span>
-            <span>{usd(s.makerVolumeNotional + s.takerVolumeNotional)}</span>
-            <span>Fees paid</span>
-            <span>{usd(s.feesPaid)}</span>
-            <span>Realized P&L</span>
-            <span>
-              <Pnl value={s.realizedPnl}>{signedUsd(s.realizedPnl)}</Pnl>
-            </span>
-            <span>Liquidations</span>
-            <span>{s.liquidationCount}</span>
-            <span>First seen</span>
-            <span>{s.firstSeenTimestamp ? dateTime(s.firstSeenTimestamp) : "–"}</span>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
 
 function Holdings({ user }: { user: Address }) {
   const { readBz, markets: list } = useRead();
@@ -295,8 +118,12 @@ export function ProfilePage() {
         </div>
       </section>
       <HistoryLag />
-      <Totals user={w.address} />
-      <PnlHistory user={w.address} />
+      <section className="panel">
+        <div className="spread">
+          <span className="small muted">Your balances, P&L, volume, fees and every history are on the Portfolio.</span>
+          <Link to="/portfolio">Portfolio →</Link>
+        </div>
+      </section>
       <Holdings user={w.address} />
     </div>
   );

@@ -49,10 +49,31 @@ export type TxPart =
       readonly fallback?: (bz: Bazaar, user: Address) => Promise<PreparedCall[]>;
     };
 
+/** One labelled figure on a confirmation. */
+export interface TxReviewRow {
+  readonly label: ReactNode;
+  readonly value: ReactNode;
+}
+
+/**
+ * A trade's confirmation, laid out: the action in a line under a buy or sell pill, then its figures as
+ * labelled rows in sections ("Order", "After this order"). With one, the job's summary holds only the
+ * notes that go under it.
+ */
+export interface TxReview {
+  readonly side: "buy" | "sell" | null;
+  /** "Sell 3.04971 NVDA". */
+  readonly action: ReactNode;
+  /** "At market, about $163.95". */
+  readonly detail?: ReactNode;
+  readonly sections: readonly { readonly title?: string; readonly rows: readonly TxReviewRow[] }[];
+}
+
 export interface TxJob {
   readonly title: string;
-  /** What will happen, restated for the confirmation ("Buy 0.5 ETH at $2,950"). */
+  /** What will happen, restated for the confirmation ("Buy 0.5 ETH at $2,950"); with a review, its notes. */
   readonly summary: readonly ReactNode[];
+  readonly review?: TxReview;
   readonly parts: readonly TxPart[];
   /** The market whose relayed requests this job sends, locked until it ends. */
   readonly pair?: Address;

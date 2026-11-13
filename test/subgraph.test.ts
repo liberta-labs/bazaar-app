@@ -102,4 +102,16 @@ describe("historyNotice", () => {
     expect(historyNotice({ reachable: true, blocksBehind: 20, secondsBehind: 5, hasIndexingErrors: false }, d)).toBeNull();
     expect(historyNotice({ reachable: true, blocksBehind: null, secondsBehind: null, hasIndexingErrors: false }, d)).toBeNull();
   });
+
+  it("stays quiet through the normal few seconds of lag, up to a minute", () => {
+    // A few seconds behind is normal: 28 blocks is 7 s on Arbitrum.
+    expect(historyNotice({ reachable: true, blocksBehind: 28, secondsBehind: 7, hasIndexingErrors: false }, d)).toBeNull();
+    expect(historyNotice({ reachable: true, blocksBehind: 240, secondsBehind: 60, hasIndexingErrors: false }, d)).toBeNull();
+    expect(historyNotice({ reachable: true, blocksBehind: 244, secondsBehind: 61, hasIndexingErrors: false }, d)).toBe("History is 61 s behind; your latest activity may not show yet.");
+    // The time decides when it is known, whatever the block count says.
+    expect(historyNotice({ reachable: true, blocksBehind: 400, secondsBehind: 30, hasIndexingErrors: false }, d)).toBeNull();
+    // Without a time, a minute's worth of blocks.
+    expect(historyNotice({ reachable: true, blocksBehind: 240, secondsBehind: null, hasIndexingErrors: false }, d)).toBeNull();
+    expect(historyNotice({ reachable: true, blocksBehind: 241, secondsBehind: null, hasIndexingErrors: false }, d)).toBe("History is 241 blocks behind; your latest activity may not show yet.");
+  });
 });

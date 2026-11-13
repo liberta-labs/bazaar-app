@@ -20,12 +20,15 @@ export function CollateralPanel({
   snap,
   acct,
   defaultTab = "deposit",
+  defaultAmount,
   onDone,
 }: {
   market: markets.MarketInfo;
   snap: markets.MarketSnapshot | undefined;
   acct: account.AccountSnapshot | undefined;
   defaultTab?: "deposit" | "withdraw";
+  /** An amount to start with (18 decimals), for a caller that knows what's needed. */
+  defaultAmount?: bigint;
   onDone?: () => void;
 }) {
   const w = useWallet();
@@ -33,7 +36,7 @@ export function CollateralPanel({
   const { readBz } = useRead();
   const { prices } = useBoard();
   const [tab, setTab] = useState(defaultTab);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => (defaultAmount !== undefined ? toInput(defaultAmount, 2) : ""));
   const [withdrawCheck, setWithdrawCheck] = useState<string | null>(null);
   const value = parseInput(text);
   const walletUsdc = acct ? fromUsdcUnits(acct.wallet.usdcBalance) : null;
@@ -47,7 +50,9 @@ export function CollateralPanel({
     setWithdrawCheck(null);
     if (tab !== "withdraw" || !readBz || !w.address || !value || value <= 0n) return;
     let dead = false;
-    const p = prices?.price(market.address);
+    // As the relayed withdrawal will see the venue (lib/board.ts previewPrice): an open venue's price
+    // isn't judged stale for being a few seconds old.
+    const p = prices?.previewPrice(market.address);
     const t = setTimeout(() => {
       readBz.previews
         .previewWithdrawal(market.address, w.address!, value, p ? { price: p } : undefined)

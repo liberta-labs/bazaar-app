@@ -1,12 +1,48 @@
 /**
  * A market's icon: the coin's own logo for crypto (from the CC0 cryptocurrency-icons set, each file
- * loaded only when shown), and a generic symbol for stocks, FX, metals, energy, other commodities and
+ * loaded only when shown), the company's logo for a stock simple-icons (CC0) has one for, on a tile of
+ * its brand colour, and a generic symbol for other stocks, FX, metals, energy, other commodities and
  * rates, on a tinted tile. Unknown assets show the ticker's first letter. Decorative: the market's name
  * is always shown beside it.
  */
 import type { markets } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useState } from "react";
-import { type AssetIconSpec, assetIconSpec, currencySign, metalTone } from "../lib/assetIcon";
+import { type AssetIconSpec, assetIconSpec, currencySign, logoColors, metalTone } from "../lib/assetIcon";
+import type { StockLogo } from "../lib/stockLogoData";
+
+// The company logos, one chunk loaded the first time a stock icon is drawn.
+let stockLogos: Promise<Readonly<Record<string, StockLogo>>> | null = null;
+// Once loaded, kept here too, so an icon drawn later starts with its logo instead of a flash of the tile.
+let stockLogosLoaded: Readonly<Record<string, StockLogo>> | null = null;
+const loadStockLogos = () =>
+  (stockLogos ??= import("../lib/stockLogoData").then((m) => {
+    stockLogosLoaded = m.STOCK_LOGOS;
+    return m.STOCK_LOGOS;
+  }));
+
+/** A stock's company logo on a tile of its brand colour; the generic tile until it loads, or for good without one. */
+function StockImage({ ticker, size, fallback }: { ticker: string; size: number; fallback: React.ReactNode }) {
+  const [logo, setLogo] = useState<StockLogo | null>(() => stockLogosLoaded?.[ticker] ?? null);
+  useEffect(() => {
+    let dead = false;
+    loadStockLogos().then(
+      (all) => !dead && setLogo(all[ticker] ?? null),
+      () => undefined,
+    );
+    return () => {
+      dead = true;
+    };
+  }, [ticker]);
+  if (!logo) return <>{fallback}</>;
+  const c = logoColors(logo.hex);
+  return (
+    <span className={`asset-icon asset-tile asset-logo${c.outlined ? " outlined" : ""}`} style={{ width: size, height: size, background: c.tile, color: c.ink }} aria-hidden="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d={logo.path} fill="currentColor" />
+      </svg>
+    </span>
+  );
+}
 
 // Each coin's SVG as a lazily loaded URL, keyed by its lower-case ticker.
 const COIN_URLS: Record<string, () => Promise<string>> = Object.fromEntries(
@@ -120,5 +156,6 @@ export function AssetIcon({ market, size = 20 }: { market: Pick<markets.MarketIn
     const fallback = <Tile spec={{ ...spec, kind: "unknown" }} size={size} />;
     return hasCoinIcon(spec.ticker) ? <CoinImage ticker={spec.ticker} size={size} fallback={fallback} /> : fallback;
   }
+  if (spec.kind === "stock") return <StockImage ticker={spec.ticker} size={size} fallback={<Tile spec={spec} size={size} />} />;
   return <Tile spec={spec} size={size} />;
 }

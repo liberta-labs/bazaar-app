@@ -3,6 +3,8 @@ import type { history } from "@liberta-labs/bazaar-sdk";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { explain } from "../lib/errors";
 import { downloadCsv, toCsv } from "../lib/csv";
+import type { SortValue } from "../lib/sort";
+import { useSort } from "../state/sort";
 import { Empty, Loading } from "./ui";
 
 export interface HistoryColumn<T> {
@@ -11,6 +13,22 @@ export interface HistoryColumn<T> {
   readonly cell: (row: T) => ReactNode;
   readonly csv: (row: T) => string | number | boolean | null | undefined;
   readonly num?: boolean;
+  /** What the column sorts by when its header is clicked; a column without one (an untitled one) doesn't sort. */
+  readonly sort?: (row: T) => SortValue;
+}
+
+/**
+ * A column's CSV value as a sort key: a number where it reads as one (amounts, sizes, ids), else the
+ * text itself (ISO times sort in time order as text), and nothing for an empty cell.
+ */
+function byCsv<T>(csv: HistoryColumn<T>["csv"]) {
+  return (row: T): SortValue => {
+    const v = csv(row);
+    if (v === null || v === undefined || v === "") return null;
+    if (typeof v !== "string") return v;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : v;
+  };
 }
 
 const PAGE = 50;
@@ -88,12 +106,19 @@ export function HistoryList<T>({
     }
   };
 
+  // Every titled column sorts: by its own key where it has one, else by its CSV value.
+  const sortOf = (c: HistoryColumn<T>) => c.sort ?? (c.header ? byCsv(c.csv) : undefined);
+  const keys = Object.fromEntries(columns.flatMap((c, i) => (sortOf(c) ? [[String(i), sortOf(c)!]] : [])));
+  const { sorted, th, sorting } = useSort(rows, keys);
+
   if (loading && !rows.length) return <Loading />;
   if (error && !rows.length) return <Empty title={error} action={<button onClick={() => void first()}>Try again</button>} />;
   if (!rows.length) return <Empty title={empty.title}>{empty.text}</Empty>;
   return (
     <>
       <div className="row" style={{ justifyContent: "flex-end", padding: "8px 10px" }}>
+        {/* Sorting orders what has loaded; a page loaded later joins the same order. */}
+        {sorting && next && <span className="small muted grow">Sorted within the {rows.length} rows loaded. Load more to include older ones.</span>}
         <button className="small" onClick={() => void exportAll()} disabled={exporting}>
           {exporting ? "Exporting…" : "Export CSV"}
         </button>
@@ -105,15 +130,21 @@ export function HistoryList<T>({
         <table>
           <thead>
             <tr>
-              {columns.map((c, i) => (
-                <th key={i} className={c.num ? "num" : ""}>
-                  {c.header}
-                </th>
-              ))}
+              {columns.map((c, i) =>
+                sortOf(c) ? (
+                  <th key={i} {...th(String(i), c.num ? "num" : "")}>
+                    {c.header}
+                  </th>
+                ) : (
+                  <th key={i} className={c.num ? "num" : ""}>
+                    {c.header}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {sorted.map((r, i) => (
               <tr key={i}>
                 {columns.map((c, j) => (
                   <td key={j} className={c.num ? "num" : ""}>

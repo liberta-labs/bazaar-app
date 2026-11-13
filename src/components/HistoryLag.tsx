@@ -11,7 +11,8 @@ import { usePoll } from "../state/poll";
 const LAG_EVERY_MS = 3 * 60_000;
 
 /**
- * "History is N seconds behind" while the subgraph trails the chain. The service checks every two
+ * "History is N seconds behind" while the subgraph trails the chain by more than a minute (lib/subgraph.ts
+ * `historyNotice`); the few seconds it normally trails say nothing. The service checks every two
  * minutes and publishes what it found on the board, so the page usually asks nothing. It checks for itself only
  * with a service that does not read the chain's history, or with no board at all.
  */

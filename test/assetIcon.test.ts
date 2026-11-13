@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { assetIconSpec, currencySign, metalTone } from "../src/lib/assetIcon";
+import { assetIconSpec, currencySign, logoColors, metalTone } from "../src/lib/assetIcon";
+import { STOCK_LOGOS } from "../src/lib/stockLogoData";
 
 describe("assetIconSpec", () => {
   it("reads the asset class and ticker from the Pyth symbol", () => {
@@ -28,5 +29,27 @@ describe("assetIconSpec", () => {
   it("colours metals and signs currencies", () => {
     expect([metalTone("XAU"), metalTone("XAG"), metalTone("XPT"), metalTone("HG")]).toEqual(["gold", "silver", "platinum", "copper"]);
     expect([currencySign("EUR"), currencySign("USD"), currencySign("XYZ"), currencySign(null)]).toEqual(["€", "$", null, null]);
+  });
+});
+
+describe("stock logos", () => {
+  it("has the listed stocks simple-icons covers, and leaves the rest to the generic tile", () => {
+    expect(STOCK_LOGOS.NVDA?.hex).toBe("76B900");
+    expect(STOCK_LOGOS.MSTR?.path.length).toBeGreaterThan(10);
+    expect(STOCK_LOGOS.TSM).toBeUndefined();
+    expect(STOCK_LOGOS.SPY).toBeUndefined();
+    for (const [ticker, logo] of Object.entries(STOCK_LOGOS)) {
+      expect(ticker).toMatch(/^[A-Z]{1,5}$/);
+      expect(logo.hex).toMatch(/^[0-9A-F]{6}$/i);
+      expect(logo.path).toMatch(/^[Mm]/);
+    }
+  });
+
+  it("puts a white mark on a dark brand colour, a dark one on a light colour, and outlines the extremes", () => {
+    expect(logoColors("76B900")).toEqual({ tile: "#76B900", ink: "#111111", outlined: false });
+    expect(logoColors("D9232E")).toEqual({ tile: "#D9232E", ink: "#FFFFFF", outlined: false });
+    expect(logoColors("000000")).toMatchObject({ ink: "#FFFFFF", outlined: true });
+    expect(logoColors("#FFFFFF")).toMatchObject({ ink: "#111111", outlined: true });
+    expect(logoColors("nonsense").tile).toBe("#5B6472");
   });
 });

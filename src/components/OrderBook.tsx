@@ -1,6 +1,7 @@
 import type { markets } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useState } from "react";
 import type { Address } from "viem";
+import { spreadPct } from "../lib/book";
 import { price, sizeText, usd } from "../lib/format";
 import { useRead } from "../state/connection";
 import { Empty, Term } from "./ui";
@@ -64,7 +65,7 @@ export function OrderBook({ pair, version, mark, onPick }: { pair: Address; vers
         <span>
           <Term t="mark">Mark</Term> {mark ? price(mark) : "–"}
         </span>
-        <span className="muted">{bestBid && bestAsk ? `spread ${price(bestAsk - bestBid)}` : ""}</span>
+        <span className="muted">{bestBid && bestAsk ? `spread ${price(bestAsk - bestBid)} · ${spreadPct(bestBid, bestAsk)}` : ""}</span>
       </div>
       {bids.map((l) => (
         <div key={`b${l.price}`} className="book-row bid" onClick={() => onPick(l.price)} title={`${sizeText(l.size)} in the asset. Click to use this price.`}>

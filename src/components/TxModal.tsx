@@ -3,22 +3,54 @@ import { ACTIVE } from "../config/networks";
 import type { TxView } from "../state/tx";
 import { TxLink } from "./ui";
 
+/** "Sell NVDA: no network fee (…)" as "No network fee (…)", for a confirmation with one relayed step. */
+function feeOnly(line: string): string {
+  const i = line.indexOf(": ");
+  const rest = i >= 0 ? line.slice(i + 2) : line;
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
 export function TxModal({ view, onConfirm, onRecover, onClose }: { view: TxView; onConfirm: () => void; onRecover: () => void; onClose: () => void }) {
   const running = view.phase === "running";
+  const review = view.job.review;
   return createPortal(
     <div className="modal-back" role="dialog" aria-modal="true" aria-labelledby="tx-title" onClick={(e) => e.target === e.currentTarget && !running && onClose()}>
       <div className="modal">
         <h2 id="tx-title">{view.job.title}</h2>
-        <div className="summary">
-          {view.job.summary.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
-          {view.fees.map((f, i) => (
-            <div key={`f${i}`} className="muted small">
-              {f}
+        {review ? (
+          <div className="review">
+            <div className="review-head">
+              {review.side && <span className={`review-side ${review.side}`}>{review.side === "buy" ? "Buy" : "Sell"}</span>}
+              <div className="grow">
+                <div className="review-action">{review.action}</div>
+                {review.detail && <div className="small muted">{review.detail}</div>}
+              </div>
             </div>
-          ))}
-        </div>
+            {review.sections.map((s, i) => (
+              <div key={i} className="review-section">
+                {s.title && <h4>{s.title}</h4>}
+                <div className="kv">
+                  {s.rows.flatMap((r, j) => [<span key={`l${j}`}>{r.label}</span>, <span key={`v${j}`}>{r.value}</span>])}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="summary">
+            {view.job.summary.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
+        )}
+        {((review && view.job.summary.length > 0) || view.fees.length > 0) && (
+          <div className="review-notes small muted">
+            {review && view.job.summary.map((line, i) => <div key={i}>{line}</div>)}
+            {/* One relayed step needs no name on its fee line. */}
+            {view.fees.map((f, i) => (
+              <div key={`f${i}`}>{view.fees.length === 1 ? feeOnly(f) : f}</div>
+            ))}
+          </div>
+        )}
         {view.needsGas && view.ethWei === 0n ? (
           <div className="banner warn small" role="status">
             <div className="grow">
@@ -69,7 +101,7 @@ export function TxModal({ view, onConfirm, onRecover, onClose }: { view: TxView;
               <button className="ghost" onClick={onClose}>
                 Cancel
               </button>
-              <button className="primary" onClick={onConfirm}>
+              <button className={review?.side ?? "primary"} onClick={onConfirm}>
                 Confirm
               </button>
             </>

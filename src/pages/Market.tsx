@@ -1,6 +1,7 @@
 import { history, type markets } from "@liberta-labs/bazaar-sdk";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ChartResizer, useChartHeight } from "../components/ChartResizer";
 import { AccountCard } from "../components/AccountCard";
 import { AccountTabs } from "../components/AccountTabs";
 import { MarketBar } from "../components/MarketBar";
@@ -103,6 +104,9 @@ export function MarketPage() {
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
   const [fills, setFills] = useState<LiveFill[]>([]);
   const { candles, trades, loading: candlesLoading, onTrade } = useCandles(info?.address, interval);
+  // How tall the chart and the book stand, set with the bar under them.
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const [chartHeight, setChartHeight] = useChartHeight();
 
   const inUse = usePageActive();
   // Another market: nothing shown belongs to it.
@@ -153,7 +157,7 @@ export function MarketPage() {
   const quiet = !candlesLoading && trades === 0;
 
   return (
-    <div className="terminal">
+    <div className="terminal" ref={terminalRef} style={{ "--chart-h": `${chartHeight}px` } as CSSProperties}>
       <MarketBar info={info} snap={snap} spot={spot} stored={stored} />
 
       {snap && snap.status !== "live" && (
@@ -216,6 +220,8 @@ export function MarketPage() {
           )}
         </div>
       </section>
+
+      <ChartResizer target={terminalRef} height={chartHeight} onChange={setChartHeight} />
 
       <div className="t-side">
         <section className="panel">

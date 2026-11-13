@@ -24,7 +24,7 @@ export const GLOSSARY = {
     "Every market has its own insurance fund. It earns a share of trading fees and pays for liquidation losses beyond a trader's margin, protecting winning traders.",
   insuranceShare:
     "Depositing into a market's insurance fund gives you shares. Their value grows with the fund's fees and falls if liquidations lose money.",
-  adl: "Auto-deleveraging (ADL): when the insurance fund can't cover a liquidation loss, trading pauses while the most profitable positions are partly closed to cover it.",
+  adl: "Auto-deleveraging (ADL): when the insurance fund can't cover the loss on liquidated positions, trading pauses while profitable positions on the other side are partly closed against them, those with the most profit for their collateral first. Five bars mean a position would be among the first.",
   limbo: "Limbo: the seconds before a scheduled shutdown. Trading has stopped and the settlement price is about to be fixed.",
   settling: "Settling: the market has a fixed final price and every open position is being closed at it. Withdrawals open once it finishes.",
   terminated: "Terminated: the market has ended. Withdraw your collateral; it pays out at the market's final payout ratio.",
@@ -39,7 +39,10 @@ export const GLOSSARY = {
   stopLimit: "A stop-limit becomes a limit order once the price reaches its trigger.",
   takeProfit: "Take-profit closes your position when the price moves in your favour to the trigger.",
   stopLoss: "Stop-loss closes your position when the price moves against you to the trigger, limiting your loss.",
-  claimable: "Fees and refunds the protocol owes you on each market: refunded trigger bounties and rewards. Claim them to your wallet.",
+  reduceOnly:
+    "Reduce only: the order can only shrink or close your position, never add to it or flip it. The app holds it to your position when you send it, and a market order fills the moment it lands. For an exit that waits for a price, use a take-profit or stop-loss: the protocol itself caps those at your position.",
+  realizedPnl:"Closed P&L: the price profit or loss a fill locked in by reducing or closing a position, before fees. Funding settled at the same time is under Funding history.",
+  claimable:"Fees and refunds the protocol owes you on each market: refunded trigger bounties and rewards. Claim them to your wallet.",
   gasless:
     "Gasless: you sign, and Bazaar's relayer sends the transaction and pays the network fee. You need no ETH. On mainnet a small USDC fee covers its cost.",
   coverage: "The fund's size against its target, a share of open interest. Below target, traders pay higher fees that refill it.",

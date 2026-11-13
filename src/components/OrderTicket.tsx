@@ -8,6 +8,9 @@
  */
 import {
   type account,
+  bucketState,
+  EBP_SCALE,
+  effectiveMmrBp,
   fromUsdcUnits,
   InputError,
   type markets,
@@ -23,9 +26,11 @@ import { ACTIVE } from "../config/networks";
 import { explain, inputSentence } from "../lib/errors";
 import { amount, ceilDiv, leverage as fmtLev, parseInput, price as fmtPrice, toInput, usd } from "../lib/format";
 import { depositPart, orderPart } from "../lib/jobs";
+import { GATE_ROOM_BP, MAX_ROOM_BP, maxGateSize, maxOrderSize, takerFeeEbp } from "../lib/maxOrder";
+import { effectLabel, orderEffect } from "../lib/orderEffect";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
-import { useRead, useWallet } from "../state/connection";
-import { useTx } from "../state/tx";
+import { useBoard, useRead, useWallet } from "../state/connection";
+import { type TxReview, useTx } from "../state/tx";
 import { FaucetButton } from "./Faucet";
 import { ActionButton, Term, Tip } from "./ui";
 
@@ -78,6 +83,7 @@ export function OrderTicket({
   const w = useWallet();
   const tx = useTx();
   const { readBz } = useRead();
+  const { prices } = useBoard();
   const base = market.label.split("/")[0] ?? "units";
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
@@ -90,6 +96,8 @@ export function OrderTicket({
     return () => window.removeEventListener("pointerdown", close);
   }, [proOpen]);
   const [attach, setAttach] = useState(false);
+  // Reduce-only, for market orders: held by the app to the position as it stands when the order is sent.
+  const [reduceOnly, setReduceOnly] = useState(false);
   const [tpText, setTpText] = useState("");
   const [slText, setSlText] = useState("");
   const [kind, setKind] = useState<Kind>("market");
@@ -146,13 +154,20 @@ export function OrderTicket({
     if (isTpSl && position && hasPosition) setSide(position.isLong ? "sell" : "buy");
   }, [isTpSl, position, hasPosition]);
 
+  // A size set exactly by Max (the whole position, to the last unit), while the field shows it rounded.
+  // Editing the amount drops it, and so does anything that changes what it closes; switching the unit
+  // keeps it.
+  const [exactSize, setExactSize] = useState<bigint | null>(null);
+  useEffect(() => setExactSize(null), [side, market.address, position?.size]);
+
   const size: bigint | null = useMemo(() => {
     if (isTpSl && closeAll) return orders.CLOSE_POSITION;
+    if (exactSize !== null) return exactSize;
     if (amt === null || amt <= 0n) return null;
     if (unit === "base") return amt;
     if (!sizingPrice || sizingPrice <= 0n) return null;
     return (amt * E18) / sizingPrice;
-  }, [amt, unit, sizingPrice, isTpSl, closeAll]);
+  }, [amt, unit, sizingPrice, isTpSl, closeAll, exactSize]);
 
   const slippageBp = useMemo(() => {
     const s = parseInput(slippageText);
@@ -195,7 +210,7 @@ export function OrderTicket({
   // What the order will do, from the pair's own arithmetic at the board's price. A new price alone
   // re-runs it but keeps the last answer on screen until the new one arrives, so the deposit note and
   // the button don't blink on every price tick; any change the user makes clears it at once.
-  const previewKey = [market.address, w.address, kind, side, unit, amountText, limitText, triggerText, tif, postOnly, slippageText, bountyText, closeAll, expiry].join("|");
+  const previewKey = [market.address, w.address, kind, side, unit, amountText, String(exactSize), limitText, triggerText, tif, postOnly, slippageText, bountyText, closeAll, expiry].join("|");
   const lastPreviewKey = useRef(previewKey);
   useEffect(() => {
     if (lastPreviewKey.current !== previewKey) {
@@ -211,7 +226,8 @@ export function OrderTicket({
     let dead = false;
     const t = setTimeout(() => {
       readBz.previews
-        .previewOrder(market.address, (w.address ?? ZERO_ADDRESS) as Address, order, { price: spot })
+        // The board's price as the relayed call will see the venue (lib/board.ts previewPrice).
+        .previewOrder(market.address, (w.address ?? ZERO_ADDRESS) as Address, order, { price: prices?.previewPrice(market.address) ?? spot })
         .then((p) => {
           if (dead) return;
           setPreview(p);
@@ -227,16 +243,103 @@ export function OrderTicket({
       dead = true;
       clearTimeout(t);
     };
-  }, [readBz, order, check, spot, market.address, w.address, previewKey]);
+  }, [readBz, order, check, spot, prices, market.address, w.address, previewKey]);
 
   // How much to deposit first. Simple mode: enough for the chosen leverage. Always: the shortfall.
   const notional = preview ? (preview.fills.reduce((s, f) => s + f.notional, 0n) || (size && sizingPrice ? (size * sizingPrice) / E18 : 0n)) : 0n;
-  const reduces = !!preview && preview.reduces && !preview.flips && !preview.opens;
+  // Whether the order only trades the held position down. The preview knows exactly; while a new one is
+  // worked out (any change to the ticket clears it, a slippage drag included), the order's own effect
+  // stands in, so the leverage slider and the TP/SL option don't blink in and out.
+  const sizedEffect = size !== null && !isTpSl ? orderEffect(isLong, size, hasPosition && position ? position : null) : null;
+  const reduces = preview ? preview.reduces && !preview.flips && !preview.opens : sizedEffect === "reduce" || sizedEffect === "close";
   const free = acct?.maxWithdrawable ?? 0n;
+
+  // The Max shortcut: the largest order this market's collateral allows at the chosen leverage, after
+  // the taker fee at the fund's current rate, with room for a market order's slippage
+  // (lib/maxOrder.ts); for a take-profit or stop-loss, the whole position.
+  // Two limits, the smaller wins: the ticket's own leverage rule (so Max never calls for a deposit), and
+  // the pair's creation check on the position the order leaves, searched with the SDK's own copy.
+  const maxMark = snap && snap.markPrice > 0n ? snap.markPrice : refPrice;
+  const feeEbp = snap
+    ? takerFeeEbp({ freeCapital: snap.insurance.freeCapital, targetRatioBp: snap.insurance.targetRatioBp }, snap.openInterest.longNotional + snap.openInterest.shortNotional)
+    : previewsNs.TAKER_INSURANCE_FEE_CAP_EBP;
+  // The held position valued at the mark, for the creation check and for what a flip leaves.
+  const held = acct && maxMark
+    ? bucketState(acct.position.isLong, acct.position.size, acct.position.entryValue, acct.position.collateral, acct.position.entryFundingIndex, maxMark, acct.state.projectedFundingIndex, effectiveMmrBp(acct.state.mmrBp, acct.state.laggedMmrBp))
+    : null;
+  // An order against a held position closes it first; past its size it flips it.
+  const opposite = !isTpSl && !!position && hasPosition && position.isLong !== isLong;
+  // What backs new exposure: the free collateral, or on a flip everything the closed position leaves
+  // (its equity, less the fee on closing it).
+  const backing = opposite && held ? held.equity - (held.currentNotional * feeEbp) / EBP_SCALE : free;
+  const openMax = sizingPrice
+    ? maxOrderSize({ free: backing, lev10, price: maxMark && maxMark > sizingPrice ? maxMark : sizingPrice, takerEbp: feeEbp, roomBp: (kind === "market" ? (slippageBp ?? 0n) : 0n) + MAX_ROOM_BP })
+    : null;
+  const upTo = (opposite && position ? position.size : 0n) + (openMax ?? 0n);
+  // Two limits, the smaller wins: the leverage rule above, and the pair's own creation check on the
+  // position the order leaves, searched with the SDK's copy of it.
+  const gateMax = (() => {
+    if (upTo === 0n) return null;
+    if (!acct || !maxMark || !held) return upTo;
+    const g = maxGateSize({
+      order: { orderType: KIND_TYPE[kind], isLong, limitPrice: limitPrice ?? 0n, triggerPrice: triggerPrice ?? 0n, maxSlippageBp: slippageBp ?? 0n },
+      position: acct.position,
+      state: held,
+      mark: maxMark,
+      imrBp: acct.state.imrBp,
+      resting: previewsNs.restingReserve(
+        acct.orders.filter((o) => !o.attached),
+        maxMark,
+      ),
+      upTo,
+      roomBp: GATE_ROOM_BP,
+    });
+    return g > 0n ? g : null;
+  })();
+  // Close: the whole held position, exactly. Max: the largest order (on the far side, a flip into the
+  // largest opposite position), except where only closing is allowed: a take-profit or stop-loss, or a
+  // reduce-only order.
+  const closeSize = (opposite || isTpSl) && position && hasPosition ? position.size : null;
+  const closeOnly = isTpSl || (reduceOnly && kind === "market");
+  const maxSize = closeOnly ? closeSize : gateMax;
+  const maxIsClose = maxSize !== null && maxSize === closeSize;
+  const maxReason = !w.address
+    ? "Connect a wallet first."
+    : !sizingPrice
+      ? "Waiting for a price."
+      : maxSize === null
+        ? closeOnly
+          ? isTpSl
+            ? "Take-profit and stop-loss need an open position on this market."
+            : `Reduce-only needs a position to reduce: ${hasPosition ? `switch to ${position?.isLong ? "Sell" : "Buy"}` : "you have none on this market"}.`
+          : "There's no collateral on this market yet. Deposit some first, or type an amount and the ticket deposits from your wallet."
+        : null;
+  const fillSize = (s: bigint, exact: boolean) => {
+    if (!sizingPrice) return;
+    if (exact) {
+      // The exact size, so nothing is left over; the field shows it to six places, in the asset.
+      setUnit("base");
+      setAmountText(toInput((s / 10n ** 12n) * 10n ** 12n, 6));
+      setExactSize(s);
+      return;
+    }
+    setExactSize(null);
+    // Rounded down, so the amount never asks for more than the collateral backs.
+    if (unit === "base") setAmountText(toInput((s / 10n ** 12n) * 10n ** 12n, 6));
+    else setAmountText(toInput(((s * sizingPrice) / E18 / CENT) * CENT, 2));
+  };
   const shortfall = preview?.margin.shortfall ?? 0n;
   let deposit = 0n;
   if (preview && w.address && !reduces && !isTpSl) {
-    const forLeverage = (kind === "market" || kind === "limit") && notional > 0n ? (notional * 10n) / BigInt(lev10) + preview.fees.total - free : 0n;
+    // Enough for the chosen leverage. On a flip only the new side needs margin, and everything the
+    // closed position leaves (its collateral after the realized P&L and the fees) backs it: so it's the
+    // position the order leaves at that leverage, against the collateral it leaves.
+    const forLeverage =
+      (kind === "market" || kind === "limit") && notional > 0n
+        ? preview.flips
+          ? (preview.after.notional * 10n) / BigInt(lev10) - preview.after.collateral
+          : (notional * 10n) / BigInt(lev10) + preview.fees.total - free
+        : 0n;
     const need = shortfall > forLeverage ? shortfall : forLeverage;
     if (need > 0n) {
       deposit = upToCent(need + need / 100n);
@@ -269,12 +372,26 @@ export function OrderTicket({
   // far worse than a newcomer would expect.
   const slippageCapped = (kind === "market" || isTpSl) && slippageBp !== null && slippageBp > APP_MAX_SLIPPAGE_BP;
 
+  // A reduce-only market order may only shrink or close the position: the same side would add to it,
+  // and more than the position would flip it.
+  const reduceOnlyErr =
+    reduceOnly && kind === "market" && size !== null
+      ? !position || !hasPosition
+        ? "Reduce-only needs a position to reduce, and you have none on this market."
+        : position.isLong === isLong
+          ? `Reduce-only: this would add to your ${position.isLong ? "long" : "short"}. Switch to ${position.isLong ? "Sell" : "Buy"}.`
+          : size > position.size
+            ? `Reduce-only: at most ${amount(position.size, 6)} ${base}, your whole position. Max fills it exactly.`
+            : null
+      : null;
+
   let disabled: string | null = null;
   if (!w.canSign) disabled = CONTRACT_WALLET_REASON;
   else if (statusReason) disabled = statusReason;
   else if (marketClosedReason) disabled = marketClosedReason;
   else if (busy) disabled = "Your last request on this market is still landing.";
   else if (!order) disabled = isTpSl && !closeAll ? "Enter a size." : "Enter an amount.";
+  else if (reduceOnlyErr) disabled = reduceOnlyErr;
   else if (check) disabled = check.message;
   else if (slippageCapped) disabled = SLIPPAGE_CAP_TEXT;
   else if (!spot) disabled = "There's no price for this market right now (the live price board is unreachable), so orders can't be checked. Try again shortly.";
@@ -285,33 +402,14 @@ export function OrderTicket({
   else if (attachErr) disabled = attachErr;
 
   const sideWord = isLong ? "Buy" : "Sell";
+  // The button names what the order does to the position, not just its side.
+  const action = effectLabel(orderEffect(isLong, size, hasPosition && position ? position : null), isLong, base);
   const sizeText = size === orders.CLOSE_POSITION ? "the whole position" : size !== null ? `${amount(size, 6)} ${base}` : "";
-  const whereText =
-    kind === "market"
-      ? `at market (about ${refPrice ? fmtPrice(refPrice) : "–"})`
-      : kind === "limit"
-        ? `at ${limitPrice ? fmtPrice(limitPrice) : "–"} or better`
-        : kind === "stopLimit"
-          ? `at ${limitPrice ? fmtPrice(limitPrice) : "–"} once the price reaches ${triggerPrice ? fmtPrice(triggerPrice) : "–"}`
-          : `when the price reaches ${triggerPrice ? fmtPrice(triggerPrice) : "–"}`;
   const title = isTpSl ? (kind === "takeProfit" ? "Take profit" : "Stop loss") : `${sideWord} ${market.label}`;
 
   const submit = () => {
     if (!w.address) return w.openConnect();
     if (!order || !preview || !readBz) return;
-    const summary: ReactNode[] = [
-      <b key="main">
-        {isTpSl ? `${title}: ${sideWord.toLowerCase()} ${sizeText} ${whereText}` : `${sideWord} ${sizeText} ${whereText}`}
-      </b>,
-      `Trading fee about ${usd(preview.fees.total)}${preview.fees.total === 0n ? "" : ""}.`,
-    ];
-    if (preview.after.size > 0n) {
-      summary.push(
-        `Afterwards: ${preview.after.isLong ? "long" : "short"} ${amount(preview.after.size, 6)} ${base}, leverage ${fmtLev(preview.after.leverage)}, liquidation price ${preview.after.liquidationPrice ? fmtPrice(preview.after.liquidationPrice) : "none"}.`,
-      );
-    } else if (preview.closes) summary.push("Afterwards: no position.");
-    if (bountyPull > 0n) summary.push(`Keeper bounty ${usd(bountyPull)} from your wallet (unused bounty comes back).`);
-    if (deposit > 0n) summary.unshift(`First, deposit ${usd(deposit)} USDC from your wallet as ${market.label} collateral.`);
     const protect = (type: OrderType, trigger: bigint): orders.OrderInput => ({
       orderType: type,
       isLong: !isLong,
@@ -321,15 +419,58 @@ export function OrderTicket({
       maxSlippageBp: 100n,
     });
     const extra = [
-      ...(tp !== null ? [{ label: "Set take-profit", order: protect(OrderType.TakeProfit, tp), line: `Then a take-profit closes the position at ${fmtPrice(tp)}.` }] : []),
-      ...(sl !== null ? [{ label: "Set stop-loss", order: protect(OrderType.StopLoss, sl), line: `Then a stop-loss closes the position at ${fmtPrice(sl)}.` }] : []),
+      ...(tp !== null ? [{ label: "Set take-profit", order: protect(OrderType.TakeProfit, tp) }] : []),
+      ...(sl !== null ? [{ label: "Set stop-loss", order: protect(OrderType.StopLoss, sl) }] : []),
     ];
-    for (const x of extra) summary.push(x.line);
-    if (extra.length) summary.push(`Each pays a ${usd(ATTACHED_BOUNTY)} keeper bounty from your wallet to whoever fires it; unused bounty comes back.`);
+    // The confirmation: the order in a line, its figures, and the position it leaves.
+    const review: TxReview = {
+      side: isLong ? "buy" : "sell",
+      action: `${sideWord} ${sizeText}`,
+      detail:
+        kind === "market"
+          ? `At market, about ${refPrice ? fmtPrice(refPrice) : "–"}`
+          : kind === "limit"
+            ? `At ${limitPrice ? fmtPrice(limitPrice) : "–"} or better`
+            : kind === "stopLimit"
+              ? `At ${limitPrice ? fmtPrice(limitPrice) : "–"} once the price reaches ${triggerPrice ? fmtPrice(triggerPrice) : "–"}`
+              : `When the price reaches ${triggerPrice ? fmtPrice(triggerPrice) : "–"}`,
+      sections: [
+        {
+          title: "Order",
+          rows: [
+            ...(deposit > 0n ? [{ label: "Deposit first", value: `${usd(deposit)} from your wallet` }] : []),
+            ...(notional > 0n ? [{ label: "Order value", value: usd(notional) }] : []),
+            { label: "Trading fee", value: `about ${usd(preview.fees.total)}` },
+            ...(bountyPull > 0n ? [{ label: "Keeper bounty", value: `${usd(bountyPull)} from your wallet` }] : []),
+            ...(tp !== null ? [{ label: "Then take-profit at", value: fmtPrice(tp) }] : []),
+            ...(sl !== null ? [{ label: "Then stop-loss at", value: fmtPrice(sl) }] : []),
+          ],
+        },
+        ...(preview.after.size > 0n
+          ? [
+              {
+                title: "After this order",
+                rows: [
+                  { label: "Position", value: `${preview.after.isLong ? "Long" : "Short"} ${amount(preview.after.size, 6)} ${base}` },
+                  { label: "Leverage", value: fmtLev(preview.after.leverage) },
+                  { label: "Liquidation price", value: preview.after.liquidationPrice ? fmtPrice(preview.after.liquidationPrice) : "none" },
+                ],
+              },
+            ]
+          : preview.closes
+            ? [{ title: "After this order", rows: [{ label: "Position", value: "none, fully closed" }] }]
+            : []),
+      ],
+    };
+    const summary: ReactNode[] = [];
+    if (deposit > 0n) summary.push(`The deposit becomes ${market.label} collateral before the order is placed.`);
+    if (bountyPull > 0n) summary.push("The keeper bounty pays whoever fires the order; any unused part comes back to you.");
+    if (extra.length) summary.push(`The take-profit and stop-loss each pay a ${usd(ATTACHED_BOUNTY)} keeper bounty from your wallet when they fire; unused bounty comes back.`);
     const rests = orders.canRest(order.orderType, order.tif ?? 0);
     void tx.run({
       title,
       summary,
+      review,
       pair: market.address,
       parts: [
         ...(deposit > 0n ? [depositPart(market.address, deposit, `Deposit ${usd(deposit)}`)] : []),
@@ -338,6 +479,7 @@ export function OrderTicket({
       ],
       onDone: () => {
         setAmountText("");
+        setExactSize(null);
         setTpText("");
         setSlText("");
         onPlaced();
@@ -354,10 +496,10 @@ export function OrderTicket({
     <div className="ticket stack" style={{ gap: 10 }}>
       <div className="seg big-seg" role="radiogroup" aria-label="Side">
         <button className={isLong ? "on buy-on" : ""} onClick={() => setSide("buy")} aria-pressed={isLong} disabled={isTpSl}>
-          Long
+          Buy / Long
         </button>
         <button className={!isLong ? "on sell-on" : ""} onClick={() => setSide("sell")} aria-pressed={!isLong} disabled={isTpSl}>
-          Short
+          Sell / Short
         </button>
       </div>
 
@@ -438,8 +580,51 @@ export function OrderTicket({
       {!(isTpSl && closeAll) && (
         <div className="input-row">
           <span className="muted">Amount</span>
-          <input className="num" inputMode="decimal" placeholder="0" value={amountText} onChange={(e) => setAmountText(e.target.value)} aria-label="Amount" />
-          <button className="chip" onClick={() => setUnit(unit === "usd" ? "base" : "usd")} title={`Enter in ${unit === "usd" ? base : "USD"}`}>
+          <input
+            className="num"
+            inputMode="decimal"
+            placeholder="0"
+            value={amountText}
+            onChange={(e) => {
+              setExactSize(null);
+              setAmountText(e.target.value);
+            }}
+            aria-label="Amount"
+          />
+          {closeSize !== null && !closeOnly && position && (
+            <Tip text={`Close your whole ${position.isLong ? "long" : "short"}: ${amount(closeSize, 6)} ${base}.`}>
+              <button className="chip" onClick={() => fillSize(closeSize, true)}>
+                Close
+              </button>
+            </Tip>
+          )}
+          <Tip
+            text={
+              maxReason ??
+              (maxIsClose && position
+                ? `Close your whole ${position.isLong ? "long" : "short"}: ${amount(position.size, 6)} ${base}.`
+                : opposite && position
+                  ? `Close your ${position.isLong ? "long" : "short"} and open the largest ${position.isLong ? "short" : "long"} what it leaves backs at ${lev.toFixed(1)}×, after fees, with room for the price to move.`
+                  : `The most your ${usd(free)} of collateral on this market covers at ${lev.toFixed(1)}×, after fees, with room for the price to move.`)
+            }
+          >
+            <button className="chip" disabled={maxReason !== null} onClick={() => maxSize !== null && fillSize(maxSize, maxIsClose)}>
+              Max
+            </button>
+          </Tip>
+          <button
+            className="chip"
+            onClick={() => {
+              // The same order in the other unit: the amount converts at the price it's sized at, rounded
+              // down. A size Max or Close set exactly stays exact, so a close still closes everything.
+              const next = unit === "usd" ? "base" : "usd";
+              if (size !== null && size !== orders.CLOSE_POSITION && sizingPrice) {
+                setAmountText(next === "usd" ? toInput(((size * sizingPrice) / E18 / CENT) * CENT, 2) : toInput((size / 10n ** 12n) * 10n ** 12n, 6));
+              }
+              setUnit(next);
+            }}
+            title={`Enter in ${unit === "usd" ? base : "USD"}`}
+          >
             {unit === "usd" ? "USD" : base} ⇄
           </button>
         </div>
@@ -468,6 +653,12 @@ export function OrderTicket({
           {kind === "market" && (
             <label className="check">
               <input type="checkbox" checked={tif === 2} onChange={(e) => setTif(e.target.checked ? 2 : 0)} /> All or nothing
+            </label>
+          )}
+          {kind === "market" && (
+            <label className="check">
+              <input type="checkbox" checked={reduceOnly} onChange={(e) => setReduceOnly(e.target.checked)} />
+              <Term t="reduceOnly">Reduce only</Term>
             </label>
           )}
         </div>
@@ -573,7 +764,7 @@ export function OrderTicket({
         </button>
       ) : (
         <ActionButton className={`wide big-btn ${isTpSl ? "primary" : isLong ? "buy" : "sell"}`} disabledReason={disabled} onClick={submit}>
-          {deposit > 0n ? `Deposit ${usd(deposit)} & ${isLong ? "long" : "short"}` : isTpSl ? `Set ${title.toLowerCase()}` : `${isLong ? "Long" : "Short"} ${base}`}
+          {isTpSl ? `Set ${title.toLowerCase()}` : deposit > 0n ? `Deposit ${usd(deposit)} & ${action[0]!.toLowerCase()}${action.slice(1)}` : action}
         </ActionButton>
       )}
       {disabled && order && w.address && <div className="small muted">{disabled}</div>}

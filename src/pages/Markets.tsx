@@ -10,7 +10,8 @@ import { dayChange } from "../lib/board";
 import { GLOSSARY } from "../lib/glossary";
 import { pct, price, rate18, signedPct, usd } from "../lib/format";
 import { useBoard, useRead, useWallet } from "../state/connection";
-import { useDayStats, useLiveAccount, useMarketSnapshots, usesMarket } from "../state/data";
+import { useDayStats, useLiveAccount, useMarketSnapshots } from "../state/data";
+import { useSort } from "../state/sort";
 
 function GettingStarted() {
   const w = useWallet();
@@ -68,7 +69,6 @@ export function MarketsPage() {
   const { snaps, loading } = useMarketSnapshots();
   const { prices } = useBoard();
   const day = useDayStats();
-  const acct = useLiveAccount();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
 
@@ -76,6 +76,26 @@ export function MarketsPage() {
     const needle = q.trim().toLowerCase();
     return list.filter((m) => !needle || m.label.toLowerCase().includes(needle) || m.description.toLowerCase().includes(needle) || m.address.toLowerCase().includes(needle));
   }, [list, q]);
+  // Each market with what its columns show, worked out once for both the cells and the sort.
+  const view = rows.map((m) => {
+    const s = snaps.get(m.address);
+    const live = prices?.price(m.address);
+    const stored = s && s.price.updateTs > 0 && s.price.spot > 0n ? s.price : null;
+    const spot = live?.spot ?? stored?.spot ?? null;
+    const d = day.get(m.address);
+    const change = dayChange(spot, prices?.dayAgo(m.address), d?.open)?.pct ?? null;
+    const oi = s ? s.openInterest.longNotional + s.openInterest.shortNotional : null;
+    return { m, s, live, stored, spot, d, change, oi };
+  });
+  const { sorted, th } = useSort(view, {
+    market: (v) => v.m.label,
+    price: (v) => v.spot,
+    change: (v) => v.change,
+    volume: (v) => v.d?.volume,
+    oi: (v) => v.oi,
+    funding: (v) => v.s?.funding.currentRatePerHour,
+    status: (v) => v.s?.status,
+  });
 
   return (
     <>
@@ -94,29 +114,21 @@ export function MarketsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Market</th>
-                  <th className="num">Price</th>
-                  <th className="num">24h change</th>
-                  <th className="num hide-sm">24h volume</th>
-                  <th className="num hide-sm">
+                  <th {...th("market")}>Market</th>
+                  <th {...th("price", "num")}>Price</th>
+                  <th {...th("change", "num")}>24h change</th>
+                  <th {...th("volume", "num hide-sm")}>24h volume</th>
+                  <th {...th("oi", "num hide-sm")}>
                     <Term t="openInterest">Open interest</Term>
                   </th>
-                  <th className="num hide-sm">
+                  <th {...th("funding", "num hide-sm")}>
                     <Term t="funding">Funding / h</Term>
                   </th>
-                  <th>Status</th>
+                  <th {...th("status")}>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((m) => {
-                  const s = snaps.get(m.address);
-                  const live = prices?.price(m.address);
-                  const stored = s && s.price.updateTs > 0 && s.price.spot > 0n ? s.price : null;
-                  const spot = live?.spot ?? stored?.spot ?? null;
-                  const d = day.get(m.address);
-                  const change = dayChange(spot, prices?.dayAgo(m.address), d?.open)?.pct ?? null;
-                  const oi = s ? s.openInterest.longNotional + s.openInterest.shortNotional : null;
-                  const mine = acct.snaps.get(m.address);
+                {sorted.map(({ m, s, live, stored, spot, d, change, oi }) => {
                   return (
                     <tr key={m.address} className="clickable" onClick={() => navigate(`/market/${m.address}`)}>
                       <td>
@@ -130,7 +142,6 @@ export function MarketsPage() {
                               <span className="badge">trading hours</span>
                             </Tip>
                           )}
-                          {mine && usesMarket(mine) && <span className="badge mine">yours</span>}
                         </div>
                       </td>
                       <td className="num">

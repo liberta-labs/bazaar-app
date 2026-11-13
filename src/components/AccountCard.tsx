@@ -4,6 +4,7 @@ import { useState } from "react";
 import { signedUsd, usd } from "../lib/format";
 import { useWallet } from "../state/connection";
 import { useLiveHealth } from "../state/data";
+import { AdlMeter, AdlWarning, positionAdl } from "./Adl";
 import { CollateralPanel } from "./Collateral";
 import { Modal } from "./Modal";
 import { Pnl, Term } from "./ui";
@@ -44,11 +45,18 @@ export function AccountCard({ market, snap, acct, onDone }: { market: markets.Ma
           <Term t="margin">Maintenance margin</Term>
         </span>
         <span>{health ? usd(health.maintenanceRequired) : "–"}</span>
+        <span>
+          <Term t="adl">ADL rank</Term>
+        </span>
+        <span>
+          <AdlMeter risk={acct ? positionAdl(acct, health) : null} />
+        </span>
         <span>Withdrawable</span>
         <span>{acct ? usd(acct.maxWithdrawable) : "–"}</span>
         <span>Wallet USDC</span>
         <span>{acct ? usd(fromUsdcUnits(acct.wallet.usdcBalance)) : "–"}</span>
       </div>
+      {acct && <AdlWarning s={acct} health={health} onChanged={onDone} />}
       <p className="small muted" style={{ margin: 0 }}>
         Collateral is held per market; this is your {market.label} account.
       </p>

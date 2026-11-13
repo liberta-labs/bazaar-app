@@ -55,6 +55,14 @@ export function appSubgraph(serviceUrl: string, chainId: number, directUrl: stri
   return withFallback(history.httpSubgraph(`${serviceUrl}/subgraph/${chainId}`, null, opts), url === null ? null : history.httpSubgraph(url, null, opts));
 }
 
+/**
+ * History further behind the chain than this gets a notice. It normally trails by a few seconds, which
+ * nobody notices; a minute is long enough that a trade just made could look missing.
+ */
+export const LAG_NOTICE_SECONDS = 60;
+/** The same when only the block count is known: a minute of Arbitrum's quarter-second blocks. */
+export const LAG_NOTICE_BLOCKS = 240;
+
 /** What the page says about its history's state, or null when there is nothing to say. */
 export function historyNotice(
   s: { readonly reachable?: boolean; readonly blocksBehind: number | null; readonly secondsBehind: number | null; readonly hasIndexingErrors: boolean },
@@ -62,7 +70,8 @@ export function historyNotice(
 ): string | null {
   if (s.reachable === false) return "History is unavailable right now.";
   if (s.hasIndexingErrors) return "History has stopped updating for now; recent activity may be missing.";
-  if (s.blocksBehind !== null && s.blocksBehind > 20) {
+  const behind = s.secondsBehind !== null ? s.secondsBehind > LAG_NOTICE_SECONDS : s.blocksBehind !== null && s.blocksBehind > LAG_NOTICE_BLOCKS;
+  if (behind) {
     return `History is ${s.secondsBehind !== null ? duration(s.secondsBehind) : `${s.blocksBehind} blocks`} behind; your latest activity may not show yet.`;
   }
   return null;

@@ -155,11 +155,22 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
-/** How old a price is, with warnings for low confidence and a closed venue. */
+/**
+ * A price older than this says how old it is. The page reads the board every 10 s, so a live price is
+ * always a few seconds old, and counting those seconds up and back down says nothing.
+ */
+const STALE_PRICE_SECONDS = 30;
+
+/**
+ * Warnings about a price: its age once it is stale, low confidence and a closed venue. Nothing while
+ * the price is fresh and sound.
+ */
 export function PriceAge({ publishTime, confidenceOk, venueClosed, stored }: { publishTime: number | null; confidenceOk?: boolean | null; venueClosed?: boolean; stored?: boolean }) {
   const now = useNow();
   if (publishTime === null) return <span className="muted small">no price yet</span>;
   const age = priceAge(publishTime, now);
+  const stale = age > STALE_PRICE_SECONDS;
+  if (!stored && !stale && confidenceOk !== false && !venueClosed) return null;
   return (
     <span className="row small" style={{ gap: 6 }}>
       {stored ? (
@@ -167,7 +178,7 @@ export function PriceAge({ publishTime, confidenceOk, venueClosed, stored }: { p
           <span className="badge">stored price · {duration(age)} old</span>
         </Tip>
       ) : (
-        <span className={age > 30 ? "accent" : "muted"}>{age < 2 ? "just now" : `${duration(age)} ago`}</span>
+        stale && <span className="accent">price {duration(age)} old</span>
       )}
       {confidenceOk === false && (
         <Tip text="Pyth's price confidence is wider than the 2% the protocol accepts right now. Trades may be refused until it narrows.">

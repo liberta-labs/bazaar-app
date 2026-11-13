@@ -394,15 +394,28 @@ main.full { max-width: none; padding: 8px 8px 16px; }
   display: grid; gap: 8px; align-items: start;
   grid-template-columns: minmax(0, 1fr) 300px 340px;
   grid-template-areas: "bar bar bar" "note note note" "chart book side" "tabs tabs side";
+  /* The side column (ticket, account) is taller than the chart: its extra height goes to the tabs row,
+     not the chart's, so the account tabs sit right under the chart and book. */
+  grid-template-rows: auto auto auto 1fr;
 }
 .terminal .market-bar { grid-area: bar; }
-.t-chart { grid-area: chart; height: 560px; display: flex; flex-direction: column; }
+.t-chart { grid-area: chart; height: var(--chart-h, 560px); display: flex; flex-direction: column; }
 .t-chart .chart-box { flex: 1; height: auto; min-height: 280px; }
-.t-book { grid-area: book; height: 560px; display: flex; flex-direction: column; }
+.t-book { grid-area: book; height: var(--chart-h, 560px); display: flex; flex-direction: column; }
 .t-book-body { flex: 1; overflow-y: auto; }
 .t-book .tabs button { flex: 1; }
 .t-side { grid-area: side; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .t-tabs { grid-area: tabs; min-height: 280px; }
+/* The drag bar (ChartResizer): in the gap under the chart and the book, across both, adding no height of
+   its own. Its grip lights up on hover, while dragging, and on keyboard focus. */
+.t-resize {
+  grid-row: 3; grid-column: 1 / 3; align-self: end; height: 8px; margin-bottom: -8px; position: relative; z-index: 3;
+  display: flex; align-items: center; justify-content: center; cursor: row-resize; touch-action: none;
+}
+.t-resize-grip { width: 44px; height: 4px; border-radius: 2px; background: var(--border-strong); transition: width 0.15s ease, background 0.15s ease; }
+.t-resize:hover .t-resize-grip, .t-resize.on .t-resize-grip, .t-resize:focus-visible .t-resize-grip { width: 88px; background: var(--accent); }
+.t-resize:focus-visible { outline: none; }
+.t-resize.on ~ * { user-select: none; }
 
 .market-bar {
   display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
@@ -447,6 +460,16 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 
 .account-card { display: flex; flex-direction: column; gap: 10px; }
 .big-num { font-family: var(--mono); font-size: 22px; color: var(--strong); }
+/* A proposal's details, folded under it: label and value read left to right, the values in full. */
+.proposal-details { margin-top: 4px; }
+.proposal-details summary { cursor: pointer; color: var(--muted); font-size: 12px; width: fit-content; }
+.proposal-details summary:hover { color: var(--text); }
+.proposal-details[open] { margin-bottom: 6px; }
+.proposal-details[open] summary { margin-bottom: 6px; }
+.proposal-details .kv { max-width: 760px; font-size: 12px; }
+.proposal-details .kv > :nth-child(even) { text-align: left; font-family: inherit; }
+.proposal-details .mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.proposal-details .prewrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .facts-panel summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .facts-panel[open] summary { margin-bottom: 10px; }
 
@@ -490,8 +513,11 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 .dot-s.warn { background: var(--accent); }
 
 @media (max-width: 1200px) {
-  .terminal { grid-template-columns: minmax(0, 1fr) 340px; grid-template-areas: "bar bar" "note note" "chart side" "book side" "tabs tabs"; }
+  .terminal { grid-template-columns: minmax(0, 1fr) 340px; grid-template-areas: "bar bar" "note note" "chart side" "book side" "tabs tabs"; grid-template-rows: none; }
+  /* Stacked, the chart and the book keep fixed heights and the drag bar goes. */
+  .t-chart { height: 560px; }
   .t-book { height: 420px; }
+  .t-resize { display: none; }
 }
 @media (max-width: 860px) {
   main.full { padding: 8px 8px 90px; }
@@ -539,7 +565,6 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
   .rtable td[data-actions] { justify-content: flex-start; padding-top: 8px; }
   .rtable td[data-actions] > .row { justify-content: flex-start !important; flex-wrap: wrap !important; width: 100%; }
   .rtable td[data-actions] button { min-height: 36px; }
-  .rtable td[data-label="Leaving the fund"] { flex-direction: column; align-items: stretch; text-align: left; }
 }
 
 /* Market icons: a coin's logo, or a generic symbol on a tinted tile. White symbols on these tints stay
@@ -558,3 +583,95 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 .asset-rates { background: #334155; }
 .asset-unknown { background: var(--panel-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
 .market-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+
+/* Earn: one table of insurance funds. A market you insure opens, on a click, into your position and
+   the way out of the fund, drawn as four steps with the one in hand marked. */
+.chev {
+  flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; border: none; background: transparent;
+  color: var(--muted); font-size: 18px; line-height: 1; transition: transform 0.15s ease;
+}
+.chev:hover:not(:disabled) { color: var(--strong); }
+.chev.on { transform: rotate(90deg); color: var(--accent-text); }
+.chev-space { flex: none; display: inline-block; width: 22px; }
+.funds tr.open td { background: var(--hover); border-bottom-color: transparent; }
+.funds tr.detail-row > td { background: var(--hover); padding: 4px 14px 16px 42px; }
+.funds tr.group-row td {
+  padding: 8px 10px 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); background: var(--panel-2);
+}
+.fund-detail { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 16px 32px; align-items: start; }
+.fund-detail h4 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.exit-steps { display: flex; list-style: none; margin: 0; padding: 0; max-width: 480px; }
+.exit-steps li { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); text-align: center; }
+.exit-steps li + li::before { content: ""; position: absolute; top: 10px; left: -50%; width: 100%; height: 2px; background: var(--border); }
+.exit-steps li.done::before, .exit-steps li.now::before { background: var(--accent); }
+.exit-steps li.now { color: var(--strong); font-weight: 600; }
+.exit-dot {
+  position: relative; z-index: 1; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; background: var(--hover); border: 2px solid var(--border); color: var(--muted);
+}
+.exit-steps li.done .exit-dot { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.exit-steps li.now .exit-dot { border-color: var(--accent); color: var(--accent-text); }
+@media (max-width: 860px) {
+  .fund-detail { grid-template-columns: minmax(0, 1fr); }
+  .funds tr.open, .funds tr.detail-row { background: var(--hover); }
+  .funds tr.open { border-bottom: none; }
+  .funds tr.open td, .funds tr.detail-row > td { background: transparent; }
+  .funds tr.detail-row > td[data-detail] { display: block; text-align: left; padding: 6px 0 4px; }
+  .funds td.no-stake { display: none; }
+  .rtable tr.group-row { padding: 0; }
+  .rtable tr.group-row td { padding: 8px 12px 6px; }
+}
+
+/* ADL rank: five rising bars, lit by how early in the ADL auction a position would qualify. Green to red
+   as it nears the front; dimmed while ADL can't reach the position (no liquidated positions on the other side). */
+.adl-meter { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; vertical-align: middle; cursor: help; }
+.adl-meter i { width: 4px; border-radius: 1px; background: var(--border); }
+.adl-meter i:nth-child(1) { height: 4px; }
+.adl-meter i:nth-child(2) { height: 6px; }
+.adl-meter i:nth-child(3) { height: 8px; }
+.adl-meter i:nth-child(4) { height: 10px; }
+.adl-meter i:nth-child(5) { height: 12px; }
+.adl-meter.lvl-1 i.on, .adl-meter.lvl-2 i.on { background: var(--up); }
+.adl-meter.lvl-3 i.on { background: var(--accent); }
+.adl-meter.lvl-4 i.on, .adl-meter.lvl-5 i.on { background: var(--down); }
+.adl-meter.calm i.on { opacity: 0.55; }
+.adl-warning { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.account-card .adl-warning { margin-bottom: 0; }
+
+/* Portfolio head: volume and fees, the account over a period with what it holds now, and the daily chart. */
+.summary-grid { display: grid; grid-template-columns: minmax(200px, 0.8fr) minmax(260px, 1fr) minmax(320px, 1.6fr); gap: 12px; margin-bottom: 12px; align-items: stretch; }
+.stat-stack { display: grid; gap: 12px; align-content: stretch; }
+.summary-equity { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.kv > .indent { padding-left: 12px; }
+.kv > .indent2 { padding-left: 24px; }
+.chip.on { color: var(--accent-text); border-color: var(--accent-line); }
+@media (max-width: 1100px) { .summary-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .summary-grid > :last-child { grid-column: 1 / -1; } }
+@media (max-width: 860px) { .summary-grid { grid-template-columns: minmax(0, 1fr); } .stat-stack { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+/* Sortable tables: every titled column sorts on a click (state/sort.ts). A faint arrow invites it; the
+   sorted column's arrow says which way. */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover, th.sortable[data-sort] { color: var(--text); }
+th.sortable::after { content: "\2195\FE0E"; margin-left: 4px; font-size: 10px; opacity: 0.35; }
+th.sortable[data-sort="asc"]::after { content: "\25B2\FE0E"; opacity: 1; color: var(--accent-text); }
+th.sortable[data-sort="desc"]::after { content: "\25BC\FE0E"; opacity: 1; color: var(--accent-text); }
+
+/* A company logo on its brand colour: the mark a little smaller than a generic glyph, and an outline on a
+   tile close to black or white so it stays visible in either theme. */
+.asset-logo svg { width: 64%; height: 64%; }
+.asset-logo.outlined { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+/* Confirmations (TxModal): a trade reads as its action under a buy or sell pill, then labelled figures
+   in sections; notes and the network fee sit underneath as a quiet footnote. */
+.summary { display: grid; gap: 6px; }
+.summary > :first-child { color: var(--strong); }
+.review { background: var(--field); border: 1px solid var(--border); border-radius: var(--radius); margin: 8px 0; }
+.review-head { display: flex; align-items: center; gap: 10px; padding: 12px; }
+.review-side { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.02em; }
+.review-side.buy { color: var(--up); background: var(--up-bg); border: 1px solid var(--up-line); }
+.review-side.sell { color: var(--down); background: var(--down-bg); border: 1px solid var(--down-line); }
+.review-action { font-size: 16px; font-weight: 600; color: var(--strong); font-family: var(--mono); overflow-wrap: anywhere; }
+.review-section { border-top: 1px solid var(--border); padding: 10px 12px; }
+.review-section h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.review-notes { display: grid; gap: 4px; padding: 2px 2px 0; }

@@ -13,18 +13,21 @@ import {
   PYTH_PRO,
   type ProSymbol,
   formatDecimal,
+  isRawFeedId,
   parseUnits18,
+  proFeedId,
   termination as term,
   uma,
 } from "@liberta-labs/bazaar-sdk";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Address, Hex } from "viem";
 import { HistoryLag } from "../components/HistoryLag";
 import { Modal } from "../components/Modal";
-import { Empty, Loading, StatusBadge, Term, Tip, useAsync } from "../components/ui";
-import { ACTIVE } from "../config/networks";
+import { Empty, Loading, StatusBadge, Term, Tip, TxLink, useAsync } from "../components/ui";
+import { ACTIVE, addressUrl } from "../config/networks";
 import { explain, isKeeperOnly } from "../lib/errors";
+import { STATUS_TEXT } from "../lib/glossary";
 import { amount, dateTime, parseInput, relative, shortAddr } from "../lib/format";
 import { costedPart } from "../lib/jobs";
 import {
@@ -40,6 +43,7 @@ import {
 } from "../lib/listing";
 import { useRead, useWallet } from "../state/connection";
 import { useMarketSnapshots } from "../state/data";
+import { useSort } from "../state/sort";
 import { useTx } from "../state/tx";
 
 type Costed = uma.CostedCall;
@@ -124,6 +128,96 @@ function AssertionLine({ id, home }: { id: Hex; home: "factory" | "terminator" }
     </Tip>
   );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Details
+// ---------------------------------------------------------------------------------------------
+
+/** One fact in a proposal's details; null, false or undefined leaves it out. */
+type Fact = { readonly k: string; readonly v: ReactNode } | null | false | undefined;
+
+/**
+ * A proposal's details, folded under it until opened: every fact the chain and the history record
+ * about it, in full. Nothing inside is drawn, or read, until it is opened. Text in it (descriptions,
+ * reasons, registry names) comes from the chain, the subgraph or Pyth, and is shown as text only.
+ */
+function ProposalDetails({ facts, txHash, note, label = "Details" }: { facts: readonly Fact[]; txHash?: Hex | null; note?: ReactNode; label?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="proposal-details" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{label}</summary>
+      {open && (
+        <>
+          <div className="kv">
+            {facts.map(
+              (f) =>
+                f && (
+                  <Fragment key={f.k}>
+                    <span>{f.k}</span>
+                    <span>{f.v}</span>
+                  </Fragment>
+                ),
+            )}
+            {txHash && (
+              <>
+                <span>Transaction</span>
+                <span>
+                  <TxLink hash={txHash}>{shortAddr(txHash)} ↗</TxLink>
+                </span>
+              </>
+            )}
+          </div>
+          {note && <p className="small muted">{note}</p>}
+        </>
+      )}
+    </details>
+  );
+}
+
+/** An address in full, linked to the explorer. */
+function Addr({ a }: { a: string }) {
+  return (
+    <a className="mono" href={addressUrl(a)} target="_blank" rel="noopener noreferrer">
+      {a}
+    </a>
+  );
+}
+
+const Mono = ({ children }: { children: ReactNode }) => <span className="mono">{children}</span>;
+const yesNo = (b: boolean) => (b ? "yes" : "no");
+
+/** "feed 1234" for a Pyth Pro feed; a composite's id is a hash, shortened. */
+const feedText = (id: Hex) => (isRawFeedId(id) ? `feed ${proFeedId(id)}` : `composite feed ${id.slice(0, 10)}…`);
+
+/** A feed by its Pyth Pro number and what Pyth's registry calls it; a composite as its two legs. */
+function FeedName({ feedId }: { feedId: Hex }) {
+  const { readBz } = useRead();
+  const registry = useAsync(() => loadRegistry(), []);
+  const raw = isRawFeedId(feedId);
+  const comp = useAsync(async () => (readBz && !raw ? readBz.listings.getComposite(feedId) : null), [readBz, feedId, raw]);
+  const leg = (id: Hex) => {
+    if (!isRawFeedId(id)) return <Mono>{id}</Mono>;
+    const s = registry.data?.find((x) => x.feedId.toLowerCase() === id.toLowerCase());
+    const name = s ? ` · ${s.symbol} · ${s.description}` : registry.loading ? " · looking it up…" : registry.error ? "" : " · not in Pyth's registry";
+    return (
+      <span>
+        {proFeedId(id)}
+        {name}
+      </span>
+    );
+  };
+  if (raw) return leg(feedId);
+  if (comp.loading) return <span className="muted">reading…</span>;
+  if (!comp.data) return <Mono>{feedId}</Mono>;
+  return (
+    <span>
+      {leg(comp.data.baseId)} {comp.data.invertQuote ? "÷" : "×"} {leg(comp.data.quoteId)}
+    </span>
+  );
+}
+
+/** A termination claim's grounds, by category number. */
+const groundsOf = (category: number) => term.TERMINATION_CATEGORY_INFO[category as term.TerminationCategory] ?? null;
 
 // ---------------------------------------------------------------------------------------------
 // Listings
@@ -378,10 +472,21 @@ function Listings() {
   const [propose, setPropose] = useState(false);
   const [n, setN] = useState(0);
   const open = useAsync(async () => (readBz ? (await readBz.listings.openListings()).listings : []), [readBz, n]);
-  const past = useAsync(async () => (readBz ? (await readBz.history.listingProposals({ first: 20, status: ["Deployed", "Rejected", "Expired", "Voided"] })).items : []), [readBz, n]);
+  // The latest proposals, open ones too: one query gives the resolved list and each open listing's
+  // transaction.
+  const recent = useAsync(async () => (readBz ? (await readBz.history.listingProposals({ first: 20 })).items : []), [readBz, n]);
+  const past = (recent.data ?? []).filter((p) => p.status !== "Pending" && p.status !== "Disputed");
+  const txOf = useMemo(() => new Map((recent.data ?? []).map((p) => [p.id.toLowerCase(), p.transactionHash])), [recent.data]);
   const refund = useAsync(async () => (readBz && w.address ? readBz.listings.seedRefundOwed(w.address) : 0n), [readBz, w.address, n]);
   const now = Date.now() / 1000;
   const reload = () => setN((x) => x + 1);
+  const { sorted: openSorted, th } = useSort(open.data ?? [], {
+    asset: (l) => l.description,
+    status: (l) => LISTING_STATUS[l.status],
+    seed: (l) => l.seedAmountUsdc,
+    // When the next step opens: disputes closing, or a disputed listing's release.
+    deadline: (l) => (l.status === "inReview" ? l.livenessEndsAt : l.status === "disputed" ? l.releaseOpensAt : 0),
+  });
   return (
     <section className="panel tight">
       <div className="panel-head">
@@ -410,19 +515,36 @@ function Listings() {
             <table className="rtable">
               <thead>
                 <tr>
-                  <th>Asset</th>
-                  <th>Status</th>
-                  <th className="num">Seed</th>
-                  <th>Deadline</th>
+                  <th {...th("asset")}>Asset</th>
+                  <th {...th("status")}>Status</th>
+                  <th {...th("seed", "num")}>Seed</th>
+                  <th {...th("deadline")}>Deadline</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {open.data.map((l) => (
+                {openSorted.map((l) => (
                   <tr key={l.assertionId}>
                     <td data-main="">
                       <b>{l.description}</b>
-                      <div className="small muted mono">feed {l.baseFeedId.slice(0, 10)}… · {l.isContinuouslyTraded ? "24/7" : "trading hours"} · by {shortAddr(l.deployer)}</div>
+                      <div className="small muted mono">
+                        {feedText(l.baseFeedId)} · {l.isContinuouslyTraded ? "24/7" : "trading hours"} · by {shortAddr(l.deployer)}
+                      </div>
+                      <ProposalDetails
+                        txHash={txOf.get(l.assertionId.toLowerCase())}
+                        facts={[
+                          { k: "Description", v: l.description },
+                          { k: "Feed", v: <FeedName feedId={l.baseFeedId} /> },
+                          { k: "Trades", v: l.isContinuouslyTraded ? "24/7" : "during trading hours" },
+                          { k: "Proposed by", v: <Addr a={l.deployer} /> },
+                          { k: "Proposed", v: dateTime(l.proposalTs) },
+                          { k: "Disputes close", v: dateTime(l.livenessEndsAt) },
+                          { k: "Insurance seed", v: uma.usdcText(l.seedAmountUsdc) },
+                          { k: "Disputed", v: yesNo(l.disputed) },
+                          { k: "UMA assertion", v: <Mono>{l.assertionId}</Mono> },
+                        ]}
+                        note="UMA's voters judge a claim the factory writes from the description, the feed and the 24/7 flag, followed by the checks every listing must pass: an active Pyth Pro feed, an eligible asset, the asset's own spot feed and one market per asset, a US dollar price, the right trading schedule, and no termination event pending."
+                      />
                     </td>
                     <td data-label="Status">
                       {LISTING_STATUS[l.status]}
@@ -460,11 +582,11 @@ function Listings() {
           </div>
         )}
         <h3>Resolved</h3>
-        {!past.data?.length ? (
+        {!past.length ? (
           <p className="small muted">None yet.</p>
         ) : (
           <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
-            {past.data.map((p: history.ListingProposal) => (
+            {past.map((p: history.ListingProposal) => (
               <li key={p.id}>
                 <b>{p.description}</b>: {p.status} {p.resolvedAt ? `(${dateTime(p.resolvedAt)})` : ""}
                 {p.pair && (
@@ -473,6 +595,23 @@ function Listings() {
                     · <Link to={`/market/${p.pair}`}>open market</Link>
                   </>
                 )}
+                <ProposalDetails
+                  txHash={p.transactionHash}
+                  facts={[
+                    { k: "Description", v: p.description },
+                    { k: "Feed", v: <FeedName feedId={p.baseFeedId} /> },
+                    { k: "Outcome", v: p.status },
+                    { k: "Proposed by", v: <Addr a={p.deployer} /> },
+                    { k: "Proposed", v: dateTime(p.proposedAt) },
+                    { k: "Dispute deadline", v: dateTime(p.livenessEndsAt) },
+                    { k: "Disputed", v: yesNo(p.disputed) },
+                    p.resolvedAt !== null && { k: "Resolved", v: dateTime(p.resolvedAt) },
+                    { k: "Insurance seed", v: `${amount(p.seedAmount, 2)} USDC` },
+                    p.seedRefundUsdc !== null && { k: "Seed returned", v: uma.usdcText(p.seedRefundUsdc) },
+                    p.pair && { k: "Market", v: <Addr a={p.pair} /> },
+                    { k: "UMA assertion", v: <Mono>{p.id}</Mono> },
+                  ]}
+                />
               </li>
             ))}
           </ul>
@@ -591,7 +730,18 @@ const PHASE_TEXT: Record<term.TerminationPhase, string> = {
   terminated: "Ended",
 };
 
-function MarketTermination({ m, snap }: { m: markets.MarketInfo; snap: markets.MarketSnapshot | undefined }) {
+function MarketTermination({
+  m,
+  snap,
+  claimTx,
+  voteTx,
+}: {
+  m: markets.MarketInfo;
+  snap: markets.MarketSnapshot | undefined;
+  /** Each recent claim's and vote's transaction, by id (lower case), from the history below. */
+  claimTx: ReadonlyMap<string, Hex>;
+  voteTx: ReadonlyMap<string, Hex>;
+}) {
   const { readBz } = useRead();
   const w = useWallet();
   const costed = useCosted();
@@ -665,6 +815,19 @@ function MarketTermination({ m, snap }: { m: markets.MarketInfo; snap: markets.M
                     <div className="small muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                       {c.reason}
                     </div>
+                    <ProposalDetails
+                      txHash={claimTx.get(c.assertionId.toLowerCase())}
+                      facts={[
+                        { k: "Grounds", v: c.categoryName },
+                        groundsOf(c.category) && { k: "Which means", v: groundsOf(c.category)!.description },
+                        { k: "Reason", v: <span className="prewrap">{c.reason}</span> },
+                        { k: "Proposed cutoff", v: dateTime(c.lastTradingTs) },
+                        { k: "Proposed by", v: <Addr a={c.proposer} /> },
+                        { k: "Proposed", v: dateTime(c.proposalTs) },
+                        { k: "Disputes close", v: dateTime(c.livenessEndsAt) },
+                        { k: "UMA assertion", v: <Mono>{c.assertionId}</Mono> },
+                      ]}
+                    />
                   </td>
                   <td data-label="Cutoff" className="small">
                     cutoff {dateTime(c.lastTradingTs)}
@@ -695,6 +858,21 @@ function MarketTermination({ m, snap }: { m: markets.MarketInfo; snap: markets.M
                     <div className="small muted">
                       {v.state} · yes {amount(v.yesShares, 2)} / {amount(v.thresholdShares, 2)} shares needed
                     </div>
+                    <ProposalDetails
+                      txHash={voteTx.get(v.id.toLowerCase())}
+                      facts={[
+                        { k: "Kind", v: v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote" },
+                        { k: "State", v: v.state },
+                        { k: "Cutoff", v: dateTime(v.cutoffTs) },
+                        { k: "Voting opens", v: dateTime(v.windowOpenTs) },
+                        { k: "Voting closes", v: dateTime(v.votingClosesAt) },
+                        { k: "Yes votes", v: `${amount(v.yesShares, 4)} shares` },
+                        { k: "Needed", v: v.snapshotTaken ? `${amount(v.thresholdShares, 4)} shares, 60% of ${amount(v.snapshotTotalShares, 4)}` : "set when voting opens" },
+                        { k: "Proposed by", v: <Addr a={v.proposer} /> },
+                        { k: "Proposed", v: dateTime(v.proposalTs) },
+                        { k: v.claimBacked ? "UMA assertion" : "Vote id", v: <Mono>{v.id}</Mono> },
+                      ]}
+                    />
                   </td>
                   <td data-label="Cutoff" className="small">
                     cutoff {dateTime(v.cutoffTs)}
@@ -734,7 +912,23 @@ function Terminations() {
     const [claims, votes] = await Promise.all([readBz.history.terminationProposals({ first: 20 }), readBz.history.insurerProposals({ first: 20 })]);
     return { claims: claims.items, votes: votes.items };
   }, [readBz]);
-  const label = (p: Address) => list.find((m) => m.address.toLowerCase() === p.toLowerCase())?.label ?? shortAddr(p);
+  const claimTx = useMemo(() => new Map((past.data?.claims ?? []).map((c) => [c.id.toLowerCase(), c.transactionHash])), [past.data]);
+  const voteTx = useMemo(() => new Map((past.data?.votes ?? []).map((v) => [v.id.toLowerCase(), v.transactionHash])), [past.data]);
+  // One market at a time, picked from the list: its state, open claims and votes, and what can be done.
+  const [chosen, setChosen] = useState<Address | null>(null);
+  const find = (p: Address) => list.find((m) => m.address.toLowerCase() === p.toLowerCase());
+  const picked = chosen ? find(chosen) : undefined;
+  // A market named in the history opens it above, where its open claims and votes can be acted on.
+  const marketName = (p: Address) => {
+    const m = find(p);
+    return m ? (
+      <button className="link small" onClick={() => setChosen(m.address)}>
+        {m.label}
+      </button>
+    ) : (
+      shortAddr(p)
+    );
+  };
   return (
     <section className="panel tight">
       <div className="panel-head">
@@ -745,7 +939,29 @@ function Terminations() {
           A market can be ended if its price feed stops, its asset is delisted, or its price series breaks. Anyone can propose it to UMA with a bond; a market's{" "}
           <Term t="insurance">insurers</Term> can also vote it through. Ended markets settle every position at a final price.
         </p>
-        {!list.length ? <Loading /> : list.map((m) => <MarketTermination key={m.address} m={m} snap={snaps.get(m.address)} />)}
+        {!list.length ? (
+          <Loading />
+        ) : (
+          <>
+            <label className="field" style={{ maxWidth: 320, marginBottom: 10 }}>
+              Market
+              <select value={picked?.address ?? ""} onChange={(e) => setChosen(e.target.value ? (e.target.value as Address) : null)}>
+                <option value="">Choose a market…</option>
+                {list.map((m) => {
+                  // A market that is no longer simply live says so, so one already ending stands out.
+                  const status = snaps.get(m.address)?.status;
+                  return (
+                    <option key={m.address} value={m.address}>
+                      {m.label}
+                      {status && status !== "live" ? ` · ${STATUS_TEXT[status]?.label ?? status}` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            {picked && <MarketTermination key={picked.address} m={picked} snap={snaps.get(picked.address)} claimTx={claimTx} voteTx={voteTx} />}
+          </>
+        )}
         <h3 style={{ marginTop: 12 }}>History</h3>
         {!past.data ? (
           <Loading />
@@ -755,14 +971,54 @@ function Terminations() {
           <ul className="small" style={{ paddingLeft: 18, margin: 0 }}>
             {past.data.claims.map((c) => (
               <li key={c.id}>
-                UMA claim on {label(c.pair)}: {c.status} · cutoff {dateTime(c.lastTradingTs)} · <span style={{ overflowWrap: "anywhere" }}>{c.reason}</span>
+                UMA claim on {marketName(c.pair)}: {c.status} · cutoff {dateTime(c.lastTradingTs)} · <span style={{ overflowWrap: "anywhere" }}>{c.reason}</span>
+                <ProposalDetails
+                  txHash={c.transactionHash}
+                  facts={[
+                    { k: "Grounds", v: groundsOf(c.category)?.name ?? `category ${c.category}` },
+                    groundsOf(c.category) && { k: "Which means", v: groundsOf(c.category)!.description },
+                    { k: "Reason", v: <span className="prewrap">{c.reason}</span> },
+                    { k: "Outcome", v: c.status },
+                    { k: "Proposed cutoff", v: dateTime(c.lastTradingTs) },
+                    c.acceptedCutoffTs !== null && { k: "Accepted cutoff", v: dateTime(c.acceptedCutoffTs) },
+                    { k: "Proposed by", v: <Addr a={c.proposer} /> },
+                    { k: "Proposed", v: dateTime(c.submittedAt) },
+                    { k: "Dispute deadline", v: dateTime(c.livenessEndsAt) },
+                    { k: "Disputed", v: yesNo(c.disputed) },
+                    c.resolvedAt !== null && { k: "Resolved", v: dateTime(c.resolvedAt) },
+                    { k: "Market", v: <Addr a={c.pair} /> },
+                    { k: "UMA assertion", v: <Mono>{c.id}</Mono> },
+                  ]}
+                />
               </li>
             ))}
-            {past.data.votes.map((v) => (
-              <li key={v.id}>
-                Insurer vote on {label(v.pair)}: {v.status} · cutoff {dateTime(v.cutoffTs)}
-              </li>
-            ))}
+            {past.data.votes.map((v) => {
+              const verdict = v.outcome ? term.OUTCOME_NAMES[v.outcome] : undefined;
+              return (
+                <li key={v.id}>
+                  Insurer vote on {marketName(v.pair)}: {v.status} · cutoff {dateTime(v.cutoffTs)}
+                  <ProposalDetails
+                    txHash={v.transactionHash}
+                    facts={[
+                      { k: "Kind", v: v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote" },
+                      { k: "Outcome", v: v.status },
+                      { k: "Cutoff", v: dateTime(v.cutoffTs) },
+                      { k: "Voting opened", v: dateTime(v.windowOpenTs) },
+                      { k: "Yes votes", v: `${amount(v.yesShares, 4)} shares` },
+                      v.snapshotTotalShares !== null && { k: "Shares at the snapshot", v: amount(v.snapshotTotalShares, 4) },
+                      v.thresholdMet !== null && { k: "Reached 60%", v: yesNo(v.thresholdMet) },
+                      verdict && verdict !== "none" && { k: "For yes-voters", v: term.OUTCOME_TEXT[verdict] },
+                      v.levyBp !== null && { k: "Levy", v: `${(Number(v.levyBp) / 100).toFixed(2)}%` },
+                      { k: "Proposed by", v: <Addr a={v.proposer} /> },
+                      { k: "Proposed", v: dateTime(v.createdAt) },
+                      v.resolvedAt !== null && { k: "Resolved", v: dateTime(v.resolvedAt) },
+                      { k: "Market", v: <Addr a={v.pair} /> },
+                      { k: v.claimBacked ? "UMA assertion" : "Vote id", v: <Mono>{v.id}</Mono> },
+                    ]}
+                  />
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -782,8 +1038,10 @@ function Identifier() {
   const [id, setId] = useState("");
   const g = useAsync(async () => (readBz ? readBz.governance.identifierGovernance() : null), [readBz, n]);
   const past = useAsync(async () => (readBz ? (await readBz.history.identifierUpgradeProposals({ first: 10 })).items : []), [readBz, n]);
+  const txOf = useMemo(() => new Map((past.data ?? []).map((p) => [p.id.toLowerCase(), p.transactionHash])), [past.data]);
   const reload = () => setN((x) => x + 1);
   const s = g.data;
+  const idText = (id: Hex) => uma.identifierText(id) ?? id;
   return (
     <section className="panel tight">
       <div className="panel-head">
@@ -848,13 +1106,58 @@ function Identifier() {
             </span>
           </div>
         )}
+        {s?.pending && (
+          <ProposalDetails
+            label="Pending proposal details"
+            txHash={txOf.get(s.pending.assertionId.toLowerCase())}
+            facts={[
+              { k: "New identifier", v: s.pending.newIdentifierText ?? s.pending.newIdentifier },
+              { k: "Replacing", v: s.umaIdentifierText ?? s.umaIdentifier },
+              { k: "Proposed by", v: <Addr a={s.pending.proposer} /> },
+              { k: "Proposed", v: dateTime(s.pending.proposalTs) },
+              { k: "Disputes close", v: dateTime(s.pending.livenessEndsAt) },
+              { k: "Disputed", v: yesNo(s.pending.disputed) },
+              { k: "UMA assertion", v: <Mono>{s.pending.assertionId}</Mono> },
+            ]}
+          />
+        )}
+        {s?.queued && (
+          <ProposalDetails
+            label="Queued upgrade details"
+            txHash={txOf.get(s.queued.assertionId.toLowerCase())}
+            facts={[
+              { k: "New identifier", v: s.queued.newIdentifierText ?? s.queued.newIdentifier },
+              { k: "Replacing", v: s.umaIdentifierText ?? s.umaIdentifier },
+              { k: "Approved", v: dateTime(s.queued.approvedAt) },
+              { k: "Timelock ends", v: dateTime(s.queued.effectiveTs) },
+              { k: "Activation opens", v: dateTime(s.queued.activationOpensAt) },
+              s.queued.newIdentifierWhitelisted !== null && { k: "On UMA's whitelist", v: yesNo(s.queued.newIdentifierWhitelisted) },
+              { k: "UMA assertion", v: <Mono>{s.queued.assertionId}</Mono> },
+            ]}
+          />
+        )}
         {past.data && past.data.length > 0 && (
           <>
             <h3>History</h3>
             <ul className="small" style={{ paddingLeft: 18, margin: 0 }}>
               {past.data.map((p) => (
                 <li key={p.id}>
-                  {uma.identifierText(p.newIdentifier) ?? p.newIdentifier}: {p.status} ({dateTime(p.proposedAt)})
+                  {idText(p.newIdentifier)}: {p.status} ({dateTime(p.proposedAt)})
+                  <ProposalDetails
+                    txHash={p.transactionHash}
+                    facts={[
+                      { k: "New identifier", v: idText(p.newIdentifier) },
+                      p.oldIdentifier !== null && { k: "Replacing", v: idText(p.oldIdentifier) },
+                      { k: "Outcome", v: p.status },
+                      { k: "Proposed by", v: <Addr a={p.proposer} /> },
+                      { k: "Proposed", v: dateTime(p.proposedAt) },
+                      { k: "Dispute deadline", v: dateTime(p.livenessEndsAt) },
+                      { k: "Disputed", v: yesNo(p.disputed) },
+                      p.effectiveTs !== null && { k: "Timelock ends", v: dateTime(p.effectiveTs) },
+                      p.resolvedAt !== null && { k: "Resolved", v: dateTime(p.resolvedAt) },
+                      { k: "UMA assertion", v: <Mono>{p.id}</Mono> },
+                    ]}
+                  />
                 </li>
               ))}
             </ul>

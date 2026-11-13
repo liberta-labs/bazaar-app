@@ -203,6 +203,20 @@ export class BoardPrices implements mk.LivePriceView {
     return this.board.generatedAt - m.price.publishTime > mk.VENUE_CLOSED_AFTER;
   }
 
+  /**
+   * The price to preview a call at (previewOrder, previewWithdrawal). The relayer sends each call with a
+   * price Pyth made that same second, but the board's reading is up to ten seconds old by the time the
+   * page has it: past the pair's 3-second freshness test (MAX_PRICE_STALENESS), so a preview given its
+   * publish time judges every trading-hours market closed, overnight sessions included. While the board
+   * itself judges the venue open, the publish time is left out and the preview leaves the venue alone;
+   * when the board judges it closed, the old time stays and the preview says so. Null off the board.
+   */
+  previewPrice(pair: Address): { spot: bigint; low: bigint; high: bigint; publishTime?: number } | null {
+    const p = this.price(pair);
+    if (!p) return null;
+    return this.venueClosed(pair) ? p : { spot: p.spot, low: p.low, high: p.high };
+  }
+
   /** The pair's price about 24 hours ago, from Pyth's history; null when the board has none. */
   dayAgo(pair: Address): bigint | null {
     return this.entry(pair)?.price?.dayAgo?.spot ?? null;

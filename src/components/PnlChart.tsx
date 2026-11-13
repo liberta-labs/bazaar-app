@@ -1,10 +1,11 @@
 /**
- * Realized profit and loss per day, as bars above and below zero (green profit, red loss), with
- * the running total in the tooltip. One series and one axis; the title names it, so no legend.
+ * A daily amount as bars, with the running total in the tooltip: profit and loss above and below zero
+ * (green profit, red loss), or volume, all above it in one colour. One series and one axis; the title
+ * names it, so no legend.
  */
 import { toNumber18 } from "@liberta-labs/bazaar-sdk";
 import { useMemo, useState } from "react";
-import { shortDate, signedUsd } from "../lib/format";
+import { shortDate, signedUsd, usd } from "../lib/format";
 
 export interface PnlDay {
   readonly date: number;
@@ -14,7 +15,15 @@ export interface PnlDay {
 const H = 180;
 const PAD = { l: 56, r: 8, t: 10, b: 22 };
 
-export function PnlChart({ days }: { days: readonly PnlDay[] }) {
+/** An axis label: "$1.2k", "$35", "$0.25", and no sign on a zero. */
+function tickText(v: number): string {
+  const a = Math.abs(v);
+  const s = a >= 1000 ? `${(a / 1000).toFixed(1)}k` : a >= 10 ? a.toFixed(0) : a >= 0.01 ? a.toFixed(2) : a > 0 ? a.toPrecision(1) : "0";
+  return `${v < 0 && s !== "0" ? "-" : ""}$${s}`;
+}
+
+export function PnlChart({ days, kind = "pnl" }: { days: readonly PnlDay[]; kind?: "pnl" | "volume" }) {
+  const volume = kind === "volume";
   const [hover, setHover] = useState<number | null>(null);
   const W = 640;
   const { bars, ticks, cum, zeroY } = useMemo(() => {
@@ -41,12 +50,12 @@ export function PnlChart({ days }: { days: readonly PnlDay[] }) {
   const h = hover !== null ? days[hover] : undefined;
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Realized profit and loss per day" onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={volume ? "Volume per day" : "Realized profit and loss per day"} onMouseLeave={() => setHover(null)}>
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={PAD.l} x2={W - PAD.r} y1={t.y} y2={t.y} style={{ stroke: "var(--row-line)" }} />
             <text x={PAD.l - 6} y={t.y + 4} textAnchor="end" fontSize="10" style={{ fill: "var(--muted)" }}>
-              {t.v >= 0 ? "" : "-"}${Math.abs(t.v) >= 1000 ? `${(Math.abs(t.v) / 1000).toFixed(1)}k` : Math.abs(t.v).toFixed(0)}
+              {tickText(t.v)}
             </text>
           </g>
         ))}
@@ -55,7 +64,10 @@ export function PnlChart({ days }: { days: readonly PnlDay[] }) {
           <g key={i} onMouseEnter={() => setHover(i)} onFocus={() => setHover(i)} tabIndex={0}>
             {/* A hit target taller than the bar. */}
             <rect x={b.x - 1} y={PAD.t} width={b.w + 2} height={H - PAD.t - PAD.b} fill="transparent" />
-            <rect x={b.x} y={b.top} width={b.w} height={b.h} rx={Math.min(2, b.w / 2)} style={{ fill: b.up ? "var(--up-fill)" : "var(--down-fill)" }} opacity={hover === null || hover === i ? 1 : 0.5} />
+            {/* A day with nothing draws no bar. */}
+            {days[i]!.pnl !== 0n && (
+              <rect x={b.x} y={b.top} width={b.w} height={b.h} rx={Math.min(2, b.w / 2)} style={{ fill: volume ? "var(--accent)" : b.up ? "var(--up-fill)" : "var(--down-fill)" }} opacity={hover === null || hover === i ? 1 : 0.5} />
+            )}
           </g>
         ))}
         {days.length > 0 && (
@@ -72,8 +84,17 @@ export function PnlChart({ days }: { days: readonly PnlDay[] }) {
       {h && hover !== null && (
         <div className="small" style={{ position: "absolute", top: 4, right: 8, background: "var(--tip-bg)", border: "1px solid var(--tip-border)", boxShadow: "0 6px 18px var(--shadow)", borderRadius: 6, padding: "6px 8px" }}>
           <div className="muted">{shortDate(h.date)}</div>
-          <div className={h.pnl >= 0n ? "up" : "down"}>{signedUsd(h.pnl)} that day</div>
-          <div>{signedUsd(cum[hover]!)} total</div>
+          {volume ? (
+            <>
+              <div>{usd(h.pnl)} that day</div>
+              <div className="muted">{usd(cum[hover]!)} so far</div>
+            </>
+          ) : (
+            <>
+              <div className={h.pnl >= 0n ? "up" : "down"}>{signedUsd(h.pnl)} that day</div>
+              <div>{signedUsd(cum[hover]!)} total</div>
+            </>
+          )}
         </div>
       )}
     </div>

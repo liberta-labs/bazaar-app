@@ -108,6 +108,16 @@ describe("BoardPrices (the SDK's LivePriceView)", () => {
     expect(at(3600).venueClosed(AAPL_PAIR)).toBe(true);
   });
 
+  it("previews an open venue's price without its publish time, and a closed one's with it", () => {
+    const at = (age: number) => new BoardPrices(parseBoard(doc({ aaplPublish: GENERATED - age })), 421614);
+    // Open: a board reading a few seconds old must not trip the pair's 3-second test in the preview.
+    expect(at(8).previewPrice(AAPL_PAIR)).toEqual({ spot: 230n * E18, low: expect.any(BigInt), high: expect.any(BigInt) });
+    expect(at(8).previewPrice(AAPL_PAIR)).not.toHaveProperty("publishTime");
+    // Closed: the old time goes through, so the preview refuses market orders as the pair would.
+    expect(at(3600).previewPrice(AAPL_PAIR)?.publishTime).toBe(GENERATED - 3600);
+    expect(at(8).previewPrice("0x5555555555555555555555555555555555555555" as Address)).toBeNull();
+  });
+
   it("never judges a 24/7 market closed, however old its price", () => {
     const d = doc();
     (d.markets[BTC_FEED] as { price: { publishTime: number } }).price.publishTime = GENERATED - 10_000;
