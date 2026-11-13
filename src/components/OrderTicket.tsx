@@ -14,6 +14,7 @@ import {
   fromUsdcUnits,
   InputError,
   type markets,
+  MAX_WALK_STEPS,
   MIN_COLLATERAL_DEPOSIT,
   OrderType,
   orders,
@@ -28,6 +29,7 @@ import { amount, ceilDiv, leverage as fmtLev, parseInput, price as fmtPrice, toI
 import { depositPart, orderPart } from "../lib/jobs";
 import { GATE_ROOM_BP, MAX_ROOM_BP, maxGateSize, maxOrderSize, takerFeeEbp } from "../lib/maxOrder";
 import { effectLabel, orderEffect } from "../lib/orderEffect";
+import { type FarSide, unfilledText } from "../lib/unfilled";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import { type TxReview, useTx } from "../state/tx";
@@ -244,6 +246,24 @@ export function OrderTicket({
       clearTimeout(t);
     };
   }, [readBz, order, check, spot, prices, market.address, w.address, previewKey]);
+
+  // A market order the book would cut short: the far side, to say why (past the max slippage, or the
+  // book ran out) and where the nearest price is. As deep as the pair's walk reaches, read again with
+  // each new preview.
+  const cutShort = kind === "market" && preview?.cancelReason === "Unfilled" && preview.canceledSize > 0n ? preview : null;
+  const farKey = `${market.address}|${side}`;
+  const [far, setFar] = useState<{ key: string; side: FarSide } | null>(null);
+  useEffect(() => {
+    if (!cutShort || !readBz) return;
+    let dead = false;
+    readBz.markets.getBookDepth(market.address, isLong ? "asks" : "bids", MAX_WALK_STEPS + 1).then(
+      (d) => !dead && setFar({ key: farKey, side: d }),
+      () => !dead && setFar(null),
+    );
+    return () => {
+      dead = true;
+    };
+  }, [cutShort, readBz, market.address, isLong, farKey]);
 
   // How much to deposit first. Simple mode: enough for the chosen leverage. Always: the shortfall.
   const notional = preview ? (preview.fills.reduce((s, f) => s + f.notional, 0n) || (size && sizingPrice ? (size * sizingPrice) / E18 : 0n)) : 0n;
@@ -754,7 +774,15 @@ export function OrderTicket({
       )}
       {preview && preview.canceledSize > 0n && preview.cancelReason && (
         <p className="small accent" style={{ margin: 0 }}>
-          {preview.cancelReason === "Unfilled" ? "The book is too thin to fill all of it now; the rest would be cancelled. Try a limit order." : `Part of it would be cancelled (${preview.cancelReason}).`}
+          {preview.cancelReason !== "Unfilled"
+            ? `Part of it would be cancelled (${preview.cancelReason}).`
+            : kind === "limit"
+              ? unfilledText({ kind: "limit", isLong, limitPrice: limitPrice ?? 0n }, preview.takerSize, base)
+              : unfilledText(
+                  { kind: "market", isLong, oracle: preview.mark, slippageBp: slippageBp ?? 0n, maxSlippageBp: APP_MAX_SLIPPAGE_BP, far: far?.key === farKey ? far.side : null },
+                  preview.takerSize,
+                  base,
+                )}
         </p>
       )}
 
