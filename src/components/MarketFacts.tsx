@@ -36,7 +36,7 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
       {warmup?.active && (
         <>
           <span>
-            <Term t="warmup">New-market cap</Term>
+            <Term t="warmup">Leverage cap</Term>
           </span>
           <span>
             {leverage(warmup.maxLeverage)} until both
