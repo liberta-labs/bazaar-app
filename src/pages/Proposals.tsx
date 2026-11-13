@@ -102,6 +102,20 @@ function useCosted() {
   return { run, notice, clear: () => setNotice(null) };
 }
 
+/**
+ * Whether the connected wallet can settle claims before their dispute window ends. Only the owner of
+ * the testnet's stand-in UMA oracle can, which is the deployer; UMA's own oracle has no owner, so on
+ * mainnet nobody sees the button.
+ */
+function useCanSettleEarly(): boolean {
+  const { readBz } = useRead();
+  const w = useWallet();
+  const owner = useAsync(async () => (readBz ? readBz.uma.earlySettler() : null), [readBz]);
+  return Boolean(owner.data && w.address && owner.data.toLowerCase() === w.address.toLowerCase());
+}
+
+const SETTLE_EARLY_TIP = "Only the deployer sees this. It settles the claim now as accepted, without waiting for the dispute window to end.";
+
 function Notice({ text, onClose }: { text: string | null; onClose: () => void }) {
   if (!text) return null;
   return (
@@ -297,6 +311,9 @@ function FeedCard({ s, role }: { s: ProSymbol; role?: string }) {
   );
 }
 
+/** Pyth Terminal's list of every Pyth Pro feed, by asset class; each feed's page shows its feed ID. */
+const PYTH_FEEDS_URL = "https://app.pyth.com/explore/all";
+
 function ProposeListing({ onClose }: { onClose: () => void }) {
   const costed = useCosted();
   const registry = useAsync(loadRegistry, []);
@@ -346,6 +363,14 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
           Asset: search Pyth (e.g. AAPL, gold) or enter a feed ID
           <input value={feed} onChange={(e) => setFeed(e.target.value)} placeholder="AAPL, or 922, or a composite id 0x…" autoFocus />
         </label>
+        <div className="small muted">
+          Not sure what to list? Browse{" "}
+          <a href={PYTH_FEEDS_URL} target="_blank" rel="noopener noreferrer">
+            every Pyth feed ↗
+          </a>
+          , then search for its name or enter its feed ID here.
+          {ACTIVE.testnet && <b> On testnet, only crypto and US equities are available for now.</b>}
+        </div>
         {registry.error ? <div className="small accent">Pyth's registry can't be read right now, so the feed can't be checked here. The proposal is still checked against it when you review.</div> : null}
         {lookup.kind === "search" &&
           (registry.loading && !registry.data ? (
@@ -469,6 +494,7 @@ function Listings() {
   const { readBz } = useRead();
   const w = useWallet();
   const costed = useCosted();
+  const early = useCanSettleEarly();
   const [propose, setPropose] = useState(false);
   const [n, setN] = useState(0);
   const open = useAsync(async () => (readBz ? (await readBz.listings.openListings()).listings : []), [readBz, n]);
@@ -561,6 +587,15 @@ function Listings() {
                         {l.status === "inReview" && (
                           <button className="small" onClick={() => void costed.run("Dispute listing", (bz, user) => bz.uma.disputeAssertion({ assertionId: l.assertionId, from: user, home: "factory" }), reload)}>
                             Dispute
+                          </button>
+                        )}
+                        {l.status === "inReview" && early && (
+                          <button
+                            className="small primary"
+                            title={SETTLE_EARLY_TIP}
+                            onClick={() => void costed.run("Settle listing early", (bz, user) => bz.uma.settleEarly({ assertionId: l.assertionId, from: user, home: "factory" }), reload)}
+                          >
+                            Settle early
                           </button>
                         )}
                         {(l.status === "settleable" || l.status === "disputed") && (
@@ -745,6 +780,7 @@ function MarketTermination({
   const { readBz } = useRead();
   const w = useWallet();
   const costed = useCosted();
+  const early = useCanSettleEarly();
   const [n, setN] = useState(0);
   const [dialog, setDialog] = useState<null | { kind: "uma" | "insurer" } | { kind: "vote"; v: term.InsurerProposalInfo }>(null);
   const st = useAsync(async () => (readBz ? readBz.termination.terminationStatus(m.address) : null), [readBz, m.address, n]);
@@ -840,6 +876,15 @@ function MarketTermination({
                       {now < c.livenessEndsAt && (
                         <button className="small" onClick={act("Dispute claim", (bz, user) => bz.uma.disputeAssertion({ assertionId: c.assertionId, from: user, home: "terminator" }))}>
                           Dispute
+                        </button>
+                      )}
+                      {now < c.livenessEndsAt && early && (
+                        <button
+                          className="small primary"
+                          title={SETTLE_EARLY_TIP}
+                          onClick={act("Settle claim early", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, home: "terminator" }))}
+                        >
+                          Settle early
                         </button>
                       )}
                       {now >= c.livenessEndsAt && (
@@ -1033,6 +1078,7 @@ function Terminations() {
 function Identifier() {
   const { readBz } = useRead();
   const costed = useCosted();
+  const early = useCanSettleEarly();
   const [n, setN] = useState(0);
   const [propose, setPropose] = useState(false);
   const [id, setId] = useState("");
@@ -1080,6 +1126,15 @@ function Identifier() {
                       <button className="small" onClick={() => void costed.run("Dispute upgrade", (bz, user) => bz.uma.disputeAssertion({ assertionId: s.pending!.assertionId, from: user, home: "factory" }), reload)}>
                         Dispute
                       </button>
+                      {early && (
+                        <button
+                          className="small primary"
+                          title={SETTLE_EARLY_TIP}
+                          onClick={() => void costed.run("Settle upgrade early", (bz, user) => bz.uma.settleEarly({ assertionId: s.pending!.assertionId, from: user, home: "factory" }), reload)}
+                        >
+                          Settle early
+                        </button>
+                      )}
                     </div>
                   )}
                 </>

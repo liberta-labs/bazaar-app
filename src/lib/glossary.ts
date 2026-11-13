@@ -29,6 +29,8 @@ export const GLOSSARY = {
   settling: "Settling: the market has a fixed final price and every open position is being closed at it. Withdrawals open once it finishes.",
   terminated: "Terminated: the market has ended. Withdraw your collateral; it pays out at the market's final payout ratio.",
   live: "Live: trading normally.",
+  warmup:
+    "New markets are capped at 5x leverage (2.5x if they follow trading hours) until they are 15 days old and have stored 25,000 prices, so margins are set from real price history. A price is stored each time a trade, a liquidation or a keeper refresh brings one in.",
   tradingHours: "This market follows its venue's trading hours (stocks, FX). While the venue is closed it runs on its last price and market orders are paused.",
   venueClosed: "The venue is closed: this market runs on its last price, fills are held within 10% of it, and market orders resume at the reopen. Limit orders still work.",
   postOnly: "Post-only: the order is cancelled instead of trading immediately, so you only ever add liquidity (and pay the lower maker fee).",

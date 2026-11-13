@@ -13,6 +13,7 @@ const sym = (id: number, symbol: string, name: string, description: string, asse
   minChannel: "real_time",
   state,
   schedule,
+  sessions: {},
   exponent: -8,
   hermesId: null,
 });

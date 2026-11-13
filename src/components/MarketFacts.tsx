@@ -1,14 +1,23 @@
 import { markets as mk, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
+import { useMemo } from "react";
 import { GLOSSARY } from "../lib/glossary";
+import { type TradingHoursText, tradingHours } from "../lib/hours";
 import { bp, dateTime, leverage, pct, price, rate18, relative, sizeText, usd } from "../lib/format";
 import { StatusBadge, Term, Tip } from "./ui";
 
 /** Hours a trading-hours market accrues funding in a year (about a US equity session's). */
 const SESSION_HOURS = 1_700;
 
+const HOURS_LABEL: Record<TradingHoursText["kind"], string> = { "24/7": "24/7", "24/5": "24/5", hours: "Market hours" };
+/** Keeps a time range, or a time zone's name, on one line when the column is narrow. */
+const NOWRAP = { whiteSpace: "nowrap" } as const;
+
 export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle: bigint | null }) {
   const m = snap.market;
+  // When Pyth prices the market's feeds, from its registry; null when the registry wasn't read.
+  const hours = useMemo(() => (m.continuous ? null : tradingHours(m.legFeeds)), [m]);
   const maxLev = previews.maxLeverage(snap.margin.imrBp);
+  const warmup = snap.warmup;
   const funding = snap.funding.currentRatePerHour;
   const annual = mk.annualizedFunding(funding, m.continuous ? undefined : SESSION_HOURS);
   const oi = snap.openInterest;
@@ -24,6 +33,22 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
         <Term t="leverage">Max leverage</Term>
       </span>
       <span>{leverage(maxLev)}</span>
+      {warmup?.active && (
+        <>
+          <span>
+            <Term t="warmup">New-market cap</Term>
+          </span>
+          <span>
+            {leverage(warmup.maxLeverage)} until both
+            <div className="small muted">
+              15 days old: {snap.timestamp >= warmup.ageClearsAt ? "done" : dateTime(warmup.ageClearsAt)}
+            </div>
+            <div className="small muted">
+              Prices stored: {warmup.pricesStored.toLocaleString("en-US")} / {warmup.pricesNeeded.toLocaleString("en-US")}
+            </div>
+          </span>
+        </>
+      )}
       <span>
         <Term t="openInterest">Open interest</Term>
       </span>
@@ -63,9 +88,25 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
         {m.continuous ? (
           "24/7"
         ) : (
-          <Tip text={GLOSSARY.tradingHours}>
-            <span className="term">Venue hours{snap.venueClosed ? " (closed now)" : ""}</span>
-          </Tip>
+          <>
+            <Tip text={GLOSSARY.tradingHours}>
+              <span className="term">
+                {hours ? HOURS_LABEL[hours.kind] : "Venue hours"}
+                {snap.venueClosed ? " (closed now)" : ""}
+              </span>
+            </Tip>
+            {hours?.text && (
+              <div className="small muted">
+                <span style={NOWRAP}>{hours.text}</span> <span style={NOWRAP}>{hours.zone} time</span>
+              </div>
+            )}
+            {hours?.local && (
+              <div className="small muted">
+                <span style={NOWRAP}>{hours.local}</span> <span style={NOWRAP}>your time</span>
+              </div>
+            )}
+            {hours?.holidays && <div className="small muted">Closed or shorter on market holidays</div>}
+          </>
         )}
       </span>
       {snap.termination.scheduledTs > 0 && (
