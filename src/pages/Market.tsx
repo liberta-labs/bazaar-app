@@ -213,7 +213,7 @@ export function MarketPage() {
               )}
             </div>
             <div className="chart-box">
-              <PriceChart candles={candles} oracle={live?.spot ?? null} precision={precisionOf(spot?.spot ?? null)} marks={showMine ? marks : NO_MARKS} />
+              <PriceChart candles={candles} viewKey={`${info.address}:${interval}`} oracle={live?.spot ?? null} precision={precisionOf(spot?.spot ?? null)} marks={showMine ? marks : NO_MARKS} />
               {quiet && (
                 <div className="chart-empty">
                   <div>
