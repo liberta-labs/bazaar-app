@@ -13,6 +13,7 @@ import { type ReactNode, createContext, useCallback, useContext, useMemo, useRef
 import type { Address, Hex } from "viem";
 import { ACTIVE } from "../config/networks";
 import { NoGasError, explain, isRejection } from "../lib/errors";
+import { withSuggestedFees } from "../lib/gasFees";
 import { usd } from "../lib/format";
 import { type RelayAction, RelayExpiredError, RelayFeeTooLowError, RelayUnavailableError, runRelayed } from "../lib/relay";
 import { NeedsWalletError, useRead, useRelayService, useWallet } from "./connection";
@@ -220,13 +221,16 @@ export function TxProvider({ children }: { children: ReactNode }) {
             if (eth !== null) setView((v) => (v ? { ...v, ethWei: eth } : v));
             if (eth === 0n) throw new NoGasError(ACTIVE.name);
             const calls = await build(w.walletBz, w.address);
+            // Suggest a max fee with room to spare (lib/gasFees): a wallet that caps it at the current
+            // price fails whenever the next block's price is a little higher.
+            const sender = withSuggestedFees(w.provider, () => (readBz ?? w.walletBz).ctx.chain.gasPrice());
             let last: Hex | undefined;
             for (const call of calls) {
               patchStep(i, { detail: `Checking: ${call.summary}` });
               const sim = await w.walletBz.simulate(call);
               if (!sim.ok) throw new CallError(sim.error?.message ?? "This transaction would fail.", sim.error ?? null);
               patchStep(i, { detail: `Confirm in your wallet: ${call.summary}` });
-              const hash = await w.walletBz.send(w.provider as never, call);
+              const hash = await w.walletBz.send(sender as never, call);
               last = hash;
               patchStep(i, { detail: "Confirming on Arbitrum…", hash });
               await w.walletBz.waitForReceipt(hash);
