@@ -1,10 +1,12 @@
 /**
- * A daily amount as bars, with the running total in the tooltip: profit and loss above and below zero
- * (green profit, red loss), or volume, all above it in one colour. One series and one axis; the title
- * names it, so no legend.
+ * A daily amount as a line, with the running total in the tooltip: profit and loss above and below zero
+ * (the line green above $0, red below, split at the zero line), or volume, all above it in one colour.
+ * The area between the line and zero is shaded lightly in the same colours.
+ * One series and one axis; the title names it, so no legend. Hovering a day marks it with a guide line
+ * and a dot.
  */
 import { toNumber18 } from "@liberta-labs/bazaar-sdk";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { shortDate, signedUsd, usd } from "../lib/format";
 
 export interface PnlDay {
@@ -14,6 +16,11 @@ export interface PnlDay {
 
 const H = 180;
 const PAD = { l: 56, r: 8, t: 10, b: 22 };
+/** Where the P&L line's colour gradient starts and ends: the plot and a margin past it. */
+const GRAD_TOP = 0;
+const GRAD_BOTTOM = H;
+/** How strongly the area under the line is shaded: a light wash of the line's colour. */
+const AREA_OPACITY = 0.16;
 
 /** An axis label: "$1.2k", "$35", "$0.25", and no sign on a zero. */
 function tickText(v: number): string {
@@ -25,32 +32,64 @@ function tickText(v: number): string {
 export function PnlChart({ days, kind = "pnl" }: { days: readonly PnlDay[]; kind?: "pnl" | "volume" }) {
   const volume = kind === "volume";
   const [hover, setHover] = useState<number | null>(null);
+  // The split colour's gradient id: one per chart, without the colons useId puts in, which url() can't take.
+  const gradient = `pnl-line-${useId().replace(/:/g, "")}`;
   const W = 640;
-  const { bars, ticks, cum, zeroY } = useMemo(() => {
+  const { points, path, area, step, ticks, cum, zeroY } = useMemo(() => {
     const vals = days.map((d) => toNumber18(d.pnl));
     const max = Math.max(0, ...vals);
     const min = Math.min(0, ...vals);
     const span = max - min || 1;
     const y = (v: number) => PAD.t + ((max - v) / span) * (H - PAD.t - PAD.b);
-    const bw = (W - PAD.l - PAD.r) / Math.max(1, days.length);
+    // The first day at the left edge and the last at the right, under their date labels.
+    const step = (W - PAD.l - PAD.r) / Math.max(1, days.length - 1);
     let running = 0n;
     const cum: bigint[] = [];
-    const bars = days.map((d, i) => {
+    const points = days.map((d, i) => {
       running += d.pnl;
       cum.push(running);
-      const v = vals[i]!;
-      const top = y(Math.max(0, v));
-      const bottom = y(Math.min(0, v));
-      return { x: PAD.l + i * bw + 1, w: Math.max(2, bw - 2), top, h: Math.max(1, bottom - top), up: d.pnl >= 0n };
+      return { x: days.length === 1 ? (PAD.l + W - PAD.r) / 2 : PAD.l + i * step, y: y(vals[i]!) };
     });
+    const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    // The shaded area: down from the line to the zero line and back along it.
+    const zeroY = y(0);
+    const first = points[0];
+    const last = points[points.length - 1];
+    const area = first && last ? `${path} L${last.x.toFixed(1)},${zeroY.toFixed(1)} L${first.x.toFixed(1)},${zeroY.toFixed(1)} Z` : "";
     const ticks = [max, (max + min) / 2, min].map((v) => ({ v, y: y(v) }));
-    return { bars, ticks, cum, zeroY: y(0) };
+    return { points, path, area, step, ticks, cum, zeroY };
   }, [days]);
 
+  // Where the zero line falls down the plot, from 0 (top) to 1 (bottom): the P&L line is green above it,
+  // red below, and gray along it, so a day with nothing realized reads as neither.
+  // The gradient runs a little past the plot, so a zero line at its top or bottom edge (all losses, or all
+  // gains) still sits inside it and keeps its gray band.
+  const at = (yy: number) => Math.min(1, Math.max(0, (yy - GRAD_TOP) / (GRAD_BOTTOM - GRAD_TOP)));
+  const aboveZero = at(zeroY - 1);
+  const belowZero = at(zeroY + 1);
+  const stroke = volume ? "var(--accent)" : `url(#${gradient})`;
+  // The area's colour splits at the zero line itself: it is green where the line is above it, red below.
+  const zeroAt = at(zeroY);
+  const fill = volume ? "var(--accent)" : `url(#${gradient}-area)`;
   const h = hover !== null ? days[hover] : undefined;
+  const p = hover !== null ? points[hover] : undefined;
   return (
     <div style={{ position: "relative" }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={volume ? "Volume per day" : "Realized profit and loss per day"} onMouseLeave={() => setHover(null)}>
+        {!volume && (
+          <defs>
+            <linearGradient id={gradient} gradientUnits="userSpaceOnUse" x1="0" y1={GRAD_TOP} x2="0" y2={GRAD_BOTTOM}>
+              <stop offset={aboveZero} style={{ stopColor: "var(--up-fill)" }} />
+              <stop offset={aboveZero} style={{ stopColor: "var(--muted)" }} />
+              <stop offset={belowZero} style={{ stopColor: "var(--muted)" }} />
+              <stop offset={belowZero} style={{ stopColor: "var(--down-fill)" }} />
+            </linearGradient>
+            <linearGradient id={`${gradient}-area`} gradientUnits="userSpaceOnUse" x1="0" y1={GRAD_TOP} x2="0" y2={GRAD_BOTTOM}>
+              <stop offset={zeroAt} style={{ stopColor: "var(--up-fill)" }} />
+              <stop offset={zeroAt} style={{ stopColor: "var(--down-fill)" }} />
+            </linearGradient>
+          </defs>
+        )}
         {ticks.map((t, i) => (
           <g key={i}>
             <line x1={PAD.l} x2={W - PAD.r} y1={t.y} y2={t.y} style={{ stroke: "var(--row-line)" }} />
@@ -59,16 +98,34 @@ export function PnlChart({ days, kind = "pnl" }: { days: readonly PnlDay[]; kind
             </text>
           </g>
         ))}
+        {points.length > 1 && <path d={area} stroke="none" style={{ fill, fillOpacity: AREA_OPACITY }} />}
         <line x1={PAD.l} x2={W - PAD.r} y1={zeroY} y2={zeroY} style={{ stroke: "var(--border-strong)" }} />
-        {bars.map((b, i) => (
-          <g key={i} onMouseEnter={() => setHover(i)} onFocus={() => setHover(i)} tabIndex={0}>
-            {/* A hit target taller than the bar. */}
-            <rect x={b.x - 1} y={PAD.t} width={b.w + 2} height={H - PAD.t - PAD.b} fill="transparent" />
-            {/* A day with nothing draws no bar. */}
-            {days[i]!.pnl !== 0n && (
-              <rect x={b.x} y={b.top} width={b.w} height={b.h} rx={Math.min(2, b.w / 2)} style={{ fill: volume ? "var(--accent)" : b.up ? "var(--up-fill)" : "var(--down-fill)" }} opacity={hover === null || hover === i ? 1 : 0.5} />
-            )}
-          </g>
+        {p && <line x1={p.x} x2={p.x} y1={PAD.t} y2={H - PAD.b} style={{ stroke: "var(--border-strong)" }} strokeDasharray="3 3" />}
+        {points.length > 1 && <path d={path} fill="none" stroke={stroke} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />}
+        {/* A single day has no line to draw: its dot stands in. */}
+        {points.length === 1 && <circle cx={points[0]!.x} cy={points[0]!.y} r={3} style={{ fill: volume ? "var(--accent)" : days[0]!.pnl < 0n ? "var(--down-fill)" : "var(--up-fill)" }} />}
+        {p && h && (
+          <circle
+            cx={p.x}
+            cy={p.y}
+            r={4}
+            strokeWidth={2}
+            style={{ fill: volume ? "var(--accent)" : h.pnl < 0n ? "var(--down-fill)" : "var(--up-fill)", stroke: "var(--panel)" }}
+          />
+        )}
+        {/* Each day's hit target: the full height of the plot, as wide as the gap between days. */}
+        {points.map((pt, i) => (
+          <rect
+            key={i}
+            x={days.length === 1 ? PAD.l : pt.x - step / 2}
+            y={PAD.t}
+            width={days.length === 1 ? W - PAD.l - PAD.r : step}
+            height={H - PAD.t - PAD.b}
+            fill="transparent"
+            tabIndex={0}
+            onMouseEnter={() => setHover(i)}
+            onFocus={() => setHover(i)}
+          />
         ))}
         {days.length > 0 && (
           <>
