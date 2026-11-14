@@ -1,9 +1,11 @@
 import { history, markets as mk } from "@liberta-labs/bazaar-sdk";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FaucetButton } from "../components/Faucet";
 import { AssetIcon } from "../components/AssetIcon";
 import { NetworkHelpLink } from "../components/NetworkHelp";
+import { MarketFilterChips, matchesSearch, useMarketFilter } from "../components/MarketFilters";
+import { StarButton, StarIcon } from "../components/StarButton";
 import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { Empty, Loading, PriceAge, StatusBadge, Term, Tip } from "../components/ui";
 import { ACTIVE } from "../config/networks";
@@ -109,11 +111,14 @@ export function MarketsPage() {
   const day = useDayStats();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const show = useMarketFilter(list, "bazaar.marketsFilter");
+  const { filter, pick } = show;
 
-  const rows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return list.filter((m) => !needle || m.label.toLowerCase().includes(needle) || m.description.toLowerCase().includes(needle) || m.address.toLowerCase().includes(needle));
-  }, [list, q]);
+  const needle = q.trim().toLowerCase();
+  const rows = list.filter((m) => show.inFilter(m) && matchesSearch(m, needle));
+  // Matches the search finds outside the picked filter, offered when it finds none inside it.
+  const elsewhere = filter !== "all" && needle ? list.filter((m) => matchesSearch(m, needle)).length : 0;
+  const filterLabel = show.label;
   // Each market with what its columns show, worked out once for both the cells and the sort.
   const view = rows.map((m) => {
     const s = snaps.get(m.address);
@@ -143,10 +148,30 @@ export function MarketsPage() {
           <h2>Markets</h2>
           <input style={{ maxWidth: 260 }} placeholder="Search markets" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search markets" />
         </div>
+        {list.length > 0 && <MarketFilterChips state={show} />}
         {!readBz || (loading && !snaps.size) ? (
           <Loading what="Loading markets" />
         ) : rows.length === 0 ? (
-          <Empty title={list.length ? "No market matches your search" : "No markets yet"}>{list.length ? "Try another name, like BTC or ETH." : "Markets appear here once listed. See Proposals to propose one."}</Empty>
+          !list.length ? (
+            <Empty title="No markets yet">Markets appear here once listed. See Proposals to propose one.</Empty>
+          ) : needle ? (
+            <Empty
+              title={filter === "all" ? "No market matches your search" : filter === "watchlist" ? "No market on your watchlist matches your search" : `No match in ${filterLabel}`}
+              action={
+                elsewhere > 0 && (
+                  <button className="small" onClick={() => pick("all")}>
+                    Search all markets ({elsewhere})
+                  </button>
+                )
+              }
+            >
+              {elsewhere > 0 ? "" : "Try another name, like BTC or ETH."}
+            </Empty>
+          ) : (
+            <Empty title="Your watchlist is empty">
+              Star a market with <StarIcon filled={false} size={13} /> to keep it here. Your watchlist is saved in this browser.
+            </Empty>
+          )
         ) : (
           <div className="table-wrap">
             <table>
@@ -163,6 +188,9 @@ export function MarketsPage() {
                     <Term t="funding">Funding / h</Term>
                   </th>
                   <th {...th("status")}>Status</th>
+                  <th className="star-col">
+                    <span className="sr-only">Watchlist</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -203,6 +231,9 @@ export function MarketsPage() {
                         )}
                       </td>
                       <td>{s ? <StatusBadge status={s.status} /> : <span className="muted">–</span>}</td>
+                      <td className="star-col">
+                        <StarButton market={m} />
+                      </td>
                     </tr>
                   );
                 })}
