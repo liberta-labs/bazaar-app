@@ -19,11 +19,13 @@ import {
   termination as term,
   uma,
 } from "@liberta-labs/bazaar-sdk";
-import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { Address, Hex } from "viem";
 import { HistoryList } from "../components/History";
+import { FaucetButton } from "../components/Faucet";
 import { HistoryLag } from "../components/HistoryLag";
+import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { Modal } from "../components/Modal";
 import { YourActivity } from "../components/YourActivity";
 import { Empty, Loading, StatusBadge, Term, Tip, TxLink, useAsync } from "../components/ui";
@@ -38,6 +40,7 @@ import {
   descriptionMismatch,
   feedIsLive,
   feedLabelOf,
+  listingShortfall,
   registryClient,
   scheduleIs247,
   searchSymbols,
@@ -459,6 +462,18 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
   const [descTouched, setDescTouched] = useState(false);
   const lookup = useFeedLookup(feed, registry.data);
   const resolved = lookup.kind === "raw" || lookup.kind === "composite" ? lookup : null;
+  // The wallet's USDC, read again after a faucet claim and whenever the user comes back to the page
+  // (say, from moving USDC in their wallet): the listing pulls the whole amount at once.
+  const w = useWallet();
+  const { readBz } = useRead();
+  const [heldN, setHeldN] = useState(0);
+  const readHeldAgain = useCallback(() => setHeldN((x) => x + 1), []);
+  const usdcHeld = useAsync(async () => (readBz && w.address ? readBz.allowance.usdcBalance(w.address) : null), [readBz, w.address, heldN]);
+  useEffect(() => {
+    window.addEventListener("focus", readHeldAgain);
+    return () => window.removeEventListener("focus", readHeldAgain);
+  }, [readHeldAgain]);
+  const shortfall = listingShortfall(usdcHeld.data, parseInput(total));
   const feeds = resolved?.feeds ?? [];
   const suggested = lookup.kind === "raw" ? suggestDescription(lookup.feeds[0]) : lookup.kind === "composite" ? suggestCompositeDescription(lookup.feeds[0], lookup.feeds[1], lookup.invertQuote) : null;
 
@@ -589,10 +604,21 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
           Total deposit, bond plus seed (USDC)
           <input className="num" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} />
         </label>
+        {shortfall && (
+          <div className="callout bad small">
+            {shortfall}
+            {ACTIVE.testnet && (
+              <>
+                {" "}
+                <FaucetButton compact onDone={readHeldAgain} /> <TestUsdcHelpLink />
+              </>
+            )}
+          </div>
+        )}
         <Notice text={costed.notice} onClose={costed.clear} />
         <button
           className="primary"
-          disabled={!resolved || !desc || !!descErr || !!blocker || parseInput(total) === null}
+          disabled={!resolved || !desc || !!descErr || !!blocker || !!shortfall || parseInput(total) === null}
           onClick={() =>
             resolved &&
             void costed.run(

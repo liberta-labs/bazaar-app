@@ -4,7 +4,17 @@
  * match against the feed, and whether the one typed matches it. A listing whose description, feed or
  * 24/7 flag does not match what Pyth publishes is likely to be disputed, and the bond lost.
  */
-import { ProClient, PYTH_PRO, type ProSymbol, feedLabel, listings } from "@liberta-labs/bazaar-sdk";
+import { ProClient, PYTH_PRO, type ProSymbol, feedLabel, fromUsdcUnits, listings, toUsdcUnitsCeil, uma } from "@liberta-labs/bazaar-sdk";
+
+/**
+ * What stops a proposal the wallet can't pay for: the listing pulls the whole `total` (bond plus seed,
+ * BAZAAR precision) from the wallet at once. `walletUsdc` is the wallet's balance in USDC units. Null
+ * when the wallet holds enough, or while either amount is unknown.
+ */
+export function listingShortfall(walletUsdc: bigint | null | undefined, total: bigint | null): string | null {
+  if (walletUsdc === null || walletUsdc === undefined || total === null || fromUsdcUnits(walletUsdc) >= total) return null;
+  return `This wallet holds ${uma.usdcText(walletUsdc)}, and the listing pulls ${uma.usdcText(toUsdcUnitsCeil(total))}. Get more USDC first.`;
+}
 
 /** A client for the registry alone: no price endpoint, so it needs no Pyth key. */
 export function registryClient(): ProClient {

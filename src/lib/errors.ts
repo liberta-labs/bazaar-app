@@ -4,6 +4,7 @@
  * a bare reverted receipt) carry a good sentence of their own, used here first.
  */
 import { CallError, ConnectError, DecodedError, InputError, UnitError, errorMessage, history, redactUrls, signing, uma, walletErrorMessage } from "@liberta-labs/bazaar-sdk";
+import { type Hex, decodeErrorResult } from "viem";
 import { FaucetRefusedError, RelayExpiredError, RelayFeeTooLowError, RelayRefusedError, RelayUnavailableError } from "./relay";
 
 /** A step sent from the wallet, and the wallet holds no ETH to pay its gas. */
@@ -44,6 +45,45 @@ const EXTRA_MESSAGES: Record<string, string> = {
   "Unknown(0x19abf40e)": "The price moved on before your transaction landed. Try again.",
 };
 
+/**
+ * OpenZeppelin's ERC-20 errors, which the test USDC raises when a transfer finds too little balance or
+ * approval. The SDK's ABIs don't declare them, so it names them only by selector.
+ */
+const ERC20_ERRORS = [
+  {
+    type: "error",
+    name: "ERC20InsufficientBalance",
+    inputs: [
+      { name: "sender", type: "address" },
+      { name: "balance", type: "uint256" },
+      { name: "needed", type: "uint256" },
+    ],
+  },
+  {
+    type: "error",
+    name: "ERC20InsufficientAllowance",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "allowance", type: "uint256" },
+      { name: "needed", type: "uint256" },
+    ],
+  },
+] as const;
+
+/** A USDC transfer that found too little balance or approval, in words. Null for any other revert. */
+export function usdcErrorSentence(data: Hex): string | null {
+  let decoded;
+  try {
+    decoded = decodeErrorResult({ abi: ERC20_ERRORS, data });
+  } catch {
+    return null;
+  }
+  const [, have, need] = decoded.args;
+  return decoded.errorName === "ERC20InsufficientBalance"
+    ? `Your wallet holds ${uma.usdcText(have)}, and this needs ${uma.usdcText(need)}. Get more USDC, then try again.`
+    : `Your USDC approval covers ${uma.usdcText(have)}, and this needs ${uma.usdcText(need)}. Try again to approve the full amount.`;
+}
+
 /** The device's clock is off: nothing was signed. */
 export const isClockSkew = (e: unknown): e is signing.ClockSkewError => e instanceof signing.ClockSkewError;
 
@@ -68,6 +108,8 @@ export function explain(e: unknown): string {
   if (e instanceof UnitError) return "Enter amounts as plain numbers, like 12.5.";
   const decoded = e instanceof DecodedError ? e : e instanceof CallError ? e.decoded : null;
   if (decoded && EXTRA_MESSAGES[decoded.name]) return EXTRA_MESSAGES[decoded.name]!;
+  const usdc = decoded ? usdcErrorSentence(decoded.data) : null;
+  if (usdc) return usdc;
   if (e instanceof InputError) return inputSentence(e);
   if (e instanceof signing.SigningError) return walletErrorMessage(e) ?? e.message;
   if (e instanceof ConnectError) return walletErrorMessage(e) ?? e.message;
