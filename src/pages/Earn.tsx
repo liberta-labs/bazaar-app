@@ -9,6 +9,7 @@ import { amount, dateTime, parseInput, pct, relative, signedPct, signedUsd, toIn
 import { EXIT_STEPS, exitDue, exitStage } from "../lib/insuranceExit";
 import { RETURN_WINDOW_SECONDS, type ReturnEstimate, estimateInsuranceReturn, sharePriceOfEvent } from "../lib/insuranceReturn";
 import { forAccount, insuranceDepositPart, insuranceExecutePart, insuranceRequestPart } from "../lib/jobs";
+import { openInterestNotional } from "../lib/openInterest";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
 import { AssetIcon } from "../components/AssetIcon";
 import { useBoard, useRead, useWallet } from "../state/connection";
@@ -418,7 +419,7 @@ function FundRow({
   const expanded = held && (open ?? exitDue(d.plan.step));
   const toggle = () => setOpen(!expanded);
   const gain = d && provider ? d.value + provider.withdrawn - provider.deposited : 0n;
-  const oi = snap.openInterest.longNotional + snap.openInterest.shortNotional;
+  const oi = openInterestNotional(snap);
   const target = (oi * snap.insurance.targetRatioBp) / 10_000n;
   const fill = target > 0n ? Math.min(1, toNumber18(snap.insurance.fund) / toNumber18(target)) : 1;
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();

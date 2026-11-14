@@ -2,6 +2,7 @@ import { markets as mk, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
 import { useMemo } from "react";
 import { GLOSSARY } from "../lib/glossary";
 import { type TradingHoursText, fundingHoursPerYear, tradingHours } from "../lib/hours";
+import { openInterestNotional, openInterestSize } from "../lib/openInterest";
 import { bp, dateTime, leverage, pct, price, rate18, relative, sizeText, usd } from "../lib/format";
 import { StatusBadge, Term, Tip } from "./ui";
 
@@ -17,8 +18,8 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
   const warmup = snap.warmup;
   const funding = snap.funding.currentRatePerHour;
   const annual = mk.annualizedFunding(funding, fundingHoursPerYear(m));
-  const oi = snap.openInterest;
-  const targetFund = ((oi.longNotional + oi.shortNotional) * snap.insurance.targetRatioBp) / 10_000n;
+  const oi = openInterestNotional(snap);
+  const targetFund = (oi * snap.insurance.targetRatioBp) / 10_000n;
   const markVsOracle = snap.markPrice > 0n && oracle ? toNumber18(snap.markPrice - oracle) / toNumber18(oracle) : null;
   return (
     <div className="kv">
@@ -50,8 +51,8 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
         <Term t="openInterest">Open interest</Term>
       </span>
       <span>
-        <span className="up">{sizeText(oi.long)}</span> / <span className="down">{sizeText(oi.short)}</span>
-        <div className="small muted">{usd(oi.longNotional + oi.shortNotional)}</div>
+        {sizeText(openInterestSize(snap.openInterest))} {m.label.split("/")[0]}
+        <div className="small muted">{usd(oi)}</div>
       </span>
       <span>
         <Term t="funding">Funding</Term>

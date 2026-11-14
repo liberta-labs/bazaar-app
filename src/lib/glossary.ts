@@ -19,7 +19,7 @@ export const GLOSSARY = {
   equity: "Your collateral plus unrealized profit and loss.",
   unrealized: "Profit or loss on your open position if you closed it at the current price.",
   fundingPnl: "Funding you have received (positive) or paid (negative) since you opened the position.",
-  openInterest: "The total size of all open positions on this market, long and short.",
+  openInterest: "All open positions on this market, counted once: every long is matched by a short.",
   insurance:
     "Every market has its own insurance fund. It earns a share of trading fees and pays for liquidation losses beyond a trader's margin, protecting winning traders.",
   insuranceShare:

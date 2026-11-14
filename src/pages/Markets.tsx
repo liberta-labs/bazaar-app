@@ -13,6 +13,7 @@ import { dayChange } from "../lib/board";
 import { GLOSSARY } from "../lib/glossary";
 import { fundingHoursPerYear, hoursLabel, tradingHours } from "../lib/hours";
 import { pct, price, rate18, signedPct, usd } from "../lib/format";
+import { openInterestNotional } from "../lib/openInterest";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import { useDayStats, useLiveAccount, useMarketSnapshots } from "../state/data";
 import { useSort } from "../state/sort";
@@ -127,7 +128,7 @@ export function MarketsPage() {
     const spot = live?.spot ?? stored?.spot ?? null;
     const d = day.get(m.address);
     const change = dayChange(spot, prices?.dayAgo(m.address), d?.open)?.pct ?? null;
-    const oi = s ? s.openInterest.longNotional + s.openInterest.shortNotional : null;
+    const oi = s ? openInterestNotional(s) : null;
     return { m, s, live, stored, spot, d, change, oi };
   });
   const { sorted, th } = useSort(view, {

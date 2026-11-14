@@ -10,6 +10,7 @@ import { dayChange } from "../lib/board";
 import { leverage, pct, price, rate18, signedPct, usd } from "../lib/format";
 import { assetName } from "../lib/assetName";
 import { fundingHoursPerYear, hoursLabel } from "../lib/hours";
+import { openInterestNotional } from "../lib/openInterest";
 import { useBoard, useRead } from "../state/connection";
 import { useDayStats } from "../state/data";
 import { PriceAge, StatusBadge, Term, Tip } from "./ui";
@@ -186,7 +187,7 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
   const changePct = day24?.pct ?? null;
   const maxLev = snap ? previews.maxLeverage(snap.margin.imrBp) : null;
   const funding = snap?.funding.currentRatePerHour ?? null;
-  const oi = snap ? snap.openInterest.longNotional + snap.openInterest.shortNotional : null;
+  const oi = snap ? openInterestNotional(snap) : null;
 
   return (
     <div className="market-bar">

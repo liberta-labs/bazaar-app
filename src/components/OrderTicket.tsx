@@ -29,6 +29,7 @@ import { explain, inputSentence } from "../lib/errors";
 import { amount, ceilDiv, leverage as fmtLev, parseInput, price as fmtPrice, toInput, usd } from "../lib/format";
 import { depositPart, orderPart } from "../lib/jobs";
 import { GATE_ROOM_BP, MAX_ROOM_BP, maxGateSize, maxOrderSize, orderLev10, takerFeeEbp } from "../lib/maxOrder";
+import { openInterestNotional } from "../lib/openInterest";
 import { effectLabel, orderEffect } from "../lib/orderEffect";
 import { type FarSide, unfilledText } from "../lib/unfilled";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
@@ -291,7 +292,7 @@ export function OrderTicket({
   // the pair's creation check on the position the order leaves, searched with the SDK's own copy.
   const maxMark = snap && snap.markPrice > 0n ? snap.markPrice : refPrice;
   const feeEbp = snap
-    ? takerFeeEbp({ freeCapital: snap.insurance.freeCapital, targetRatioBp: snap.insurance.targetRatioBp }, snap.openInterest.longNotional + snap.openInterest.shortNotional)
+    ? takerFeeEbp({ freeCapital: snap.insurance.freeCapital, targetRatioBp: snap.insurance.targetRatioBp }, openInterestNotional(snap))
     : previewsNs.TAKER_INSURANCE_FEE_CAP_EBP;
   // The held position valued at the mark, for the creation check and for what a flip leaves.
   const held = acct && maxMark
