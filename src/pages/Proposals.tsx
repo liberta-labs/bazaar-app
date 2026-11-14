@@ -172,7 +172,7 @@ function DisputeStake({ bond, oo }: { bond: bigint; oo: Address }) {
   const est = reported === null ? "≈" : "";
   return (
     <Tip
-      text={`To dispute, you post a ${uma.usdcText(bond)} bond, matching the proposer's. UMA's voters then decide, which takes a few days. If they side with you, you get ${est}${uma.usdcText(back)} back: your bond plus ${est}${uma.usdcText(back - bond)}, the proposer's bond less UMA's fee. If they side with the proposer, your bond is lost.${reported === null ? " This oracle doesn't report UMA's fee, so the figure assumes UMA's standard fee of half the losing bond." : ""}`}
+      text={`A dispute bonds ${uma.usdcText(bond)}, like the proposer's. UMA's voters decide in a few days: win and get ${est}${uma.usdcText(back)} back, lose and the bond is gone.${reported === null ? " Estimated with UMA's standard fee." : ""}`}
     >
       <div className="small term">
         Dispute stake {uma.usdcText(bond)} · wins {est}+{uma.usdcText(back - bond)}

@@ -97,9 +97,9 @@ function HoursBadge({ m }: { m: mk.MarketInfo }) {
     );
   }
   const h = tradingHours(m.legFeeds);
-  const when = h?.text ? ` Open ${h.text}, ${h.zone} time${h.holidays ? ", closed or shorter on market holidays" : ""}.` : "";
+  const when = h?.text ? ` Open ${h.text}, ${h.zone} time${h.holidays ? ", except market holidays" : ""}.` : "";
   return (
-    <Tip text={`${h?.kind === "24/5" ? "Trades around the clock on weekdays." : ""}${when} ${GLOSSARY.tradingHours}`.trim()}>
+    <Tip text={`${h?.kind === "24/5" ? "Around the clock on weekdays." : ""}${when} ${GLOSSARY.tradingHours}`.trim()}>
       <span className="badge">{hoursLabel(m)}</span>
     </Tip>
   );

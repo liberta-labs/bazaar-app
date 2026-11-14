@@ -469,7 +469,7 @@ function FundRow({
           ) : est === null || est.feeApr === null ? (
             "–"
           ) : (
-            <Tip text={`From the insurance share of the last 30 days' fees (${usd(est.insuranceFees)}) on a ${usd(snap.insurance.freeCapital)} fund, annualized. Past performance, not a promise.${est.complete ? "" : " Not every fill could be read: a lower bound."}`}>
+            <Tip text={`The fund's ${usd(est.insuranceFees)} share of 30 days' fees on ${usd(snap.insurance.freeCapital)}, annualized. Past results, not a promise.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
               <span className="term">{pct(est.feeApr)}</span>
             </Tip>
           )}

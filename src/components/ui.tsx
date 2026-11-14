@@ -174,7 +174,7 @@ export function PriceAge({ publishTime, confidenceOk, venueClosed, stored }: { p
   return (
     <span className="row small" style={{ gap: 6 }}>
       {stored ? (
-        <Tip text="This market is not on the live price board (it is settling or has ended). This is the last price the market stored on chain.">
+        <Tip text="Not on the live price board (settling or ended): this is the last price stored on chain.">
           <span className="badge">stored price · {duration(age)} old</span>
         </Tip>
       ) : (

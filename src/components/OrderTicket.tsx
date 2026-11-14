@@ -877,7 +877,7 @@ export function OrderTicket({
         <span>Leverage after</span>
         <span>{preview ? fmtLev(preview.after.leverage) : "–"}</span>
         <span>
-          <Tip text="Trading fees: taker (fills now) / maker (rests in the book). The taker rate rises while the insurance fund is below its target.">
+          <Tip text="Taker (fills now) / maker (rests in the book). The taker rate rises while the insurance fund is below target.">
             <span className="term">Fees</span>
           </Tip>
         </span>

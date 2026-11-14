@@ -169,7 +169,7 @@ export function InsuranceStats({ readBz, user }: { readBz: Bazaar; user: Address
                   <td data-label="Shares" className="num">
                     {amount(p.shares, 4)}
                     {(p.levyChargedShares > 0n || p.levyReceivedShares > 0n) && (
-                      <Tip text="Shares moved by insurer-vote levies: charged to yes-voters of a vote that failed or went unjudged, received by the fund's other holders.">
+                      <Tip text="Shares levied from yes-voters of a failed or unjudged insurer vote, paid to the fund's other holders.">
                         <div className="small muted term">
                           levy {p.levyChargedShares > 0n ? `−${amount(p.levyChargedShares, 4)}` : ""}
                           {p.levyReceivedShares > 0n ? ` +${amount(p.levyReceivedShares, 4)}` : ""}

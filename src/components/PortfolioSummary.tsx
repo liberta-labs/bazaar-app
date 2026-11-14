@@ -121,7 +121,7 @@ export function PortfolioSummary({ user }: { user: Address }) {
         </div>
         <div className="kv" style={{ marginTop: 10 }}>
           <span>
-            <Tip text="Price profit and loss from reducing and closing positions, less trading fees, over the period's UTC days. Funding settled on those closes is under Funding history.">
+            <Tip text="Profit and loss from reducing and closing positions, less fees, by UTC day. Funding is under Funding history.">
               <span className="term">P&L after fees</span>
             </Tip>
           </span>

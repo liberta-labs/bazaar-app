@@ -33,13 +33,13 @@ function whenText(after: number): string {
 }
 
 function meterText(r: AdlRisk): string {
-  if (r.bars === 0) return "ADL rank: none. Auto-deleveraging only closes positions in profit, so this one can't be picked.";
+  if (r.bars === 0) return "ADL rank: none. ADL only closes positions in profit.";
   const where = r.running
-    ? `ADL is running on this market now${r.qualifiesNow ? ", and this position qualifies" : ""}.`
+    ? `ADL is running here now${r.qualifiesNow ? ", and this position qualifies" : ""}.`
     : r.exposed
-      ? `The vault holds liquidated ${r.against}, so ADL can reach this position if the insurance fund can't cover their loss.`
-      : `The vault holds no liquidated ${r.against} right now, so ADL can't reach this position at the moment.`;
-  return `ADL rank ${r.bars} of 5: profit is ${scoreText(r.score)} the collateral. If ADL starts, it closes profitable positions from the highest ratio down over 10 minutes; this one would qualify ${whenText(r.qualifiesAfter ?? 600)}. ${where} Adding collateral or taking some profit lowers the ratio.`;
+      ? `The vault holds liquidated ${r.against}, so ADL could reach this position.`
+      : `The vault holds no liquidated ${r.against}, so ADL can't reach this position now.`;
+  return `ADL rank ${r.bars} of 5: profit is ${scoreText(r.score)} the collateral. If ADL starts, this qualifies ${whenText(r.qualifiesAfter ?? 600)}. ${where} More collateral or taking profit lowers the rank.`;
 }
 
 /** Five bars, lit by how early in the ADL auction the position would qualify; the details on hover. */

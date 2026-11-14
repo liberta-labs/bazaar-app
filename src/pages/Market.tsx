@@ -231,7 +231,7 @@ export function MarketPage() {
                   TradingView
                 </a>
               </span>
-              <Tip text="Candles are built from this market's fills. The dashed yellow line is the oracle price from Pyth. Your open orders show as green (buy) and red (sell) lines, dotted while they wait on a trigger, with your position's entry as a solid line and its liquidation price in orange. Hide my orders takes them off the chart.">
+              <Tip text="Candles come from fills. Yellow dashed line: the oracle price. Your orders: green (buy), red (sell). Your entry: solid. Liquidation: orange.">
                 <span className="term">about this chart</span>
               </Tip>
             </div>
