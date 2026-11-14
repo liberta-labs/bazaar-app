@@ -401,7 +401,7 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
                 <Term t="liquidationPrice">Liquidation</Term>
               </th>
               <th {...th("adl", "num")}>
-                <Term t="adl">ADL Risk</Term>
+                <Term t="adl">ADL rank</Term>
               </th>
               <th {...th("tpsl", "num")}>
                 <Term t="takeProfit">TP / SL</Term>
@@ -456,7 +456,7 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
                     {liq.price !== null ? price(liq.price) : "none"}
                     {liq.distance !== null && <div className={`small ${liq.distance < 0.05 ? "down" : "muted"}`}>{pct(liq.distance, 1)} away</div>}
                   </td>
-                  <td data-label="ADL Risk" className="num">
+                  <td data-label="ADL rank" className="num">
                     <AdlMeter risk={positionAdl(s, h)} />
                   </td>
                   <td data-label="TP / SL" className="num">
