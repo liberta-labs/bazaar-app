@@ -18,6 +18,10 @@ npm-debug.log*
 *.tsbuildinfo
 coverage/
 .vite/
+# Playwright's results, report and traces.
+test-results/
+playwright-report/
+blob-report/
 .vscode/
 .idea/
 .DS_Store
