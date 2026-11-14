@@ -46,7 +46,7 @@ export function AccountCard({ market, snap, acct, onDone }: { market: markets.Ma
         </span>
         <span>{health ? usd(health.maintenanceRequired) : "–"}</span>
         <span>
-          <Term t="adl">ADL rank</Term>
+          <Term t="adl">ADL Risk</Term>
         </span>
         <span>
           <AdlMeter risk={acct ? positionAdl(acct, health) : null} />

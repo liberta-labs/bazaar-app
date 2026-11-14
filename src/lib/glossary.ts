@@ -18,7 +18,7 @@ export const GLOSSARY = {
   openInterest: "All open positions on this market, counted once: every long is matched by a short.",
   insurance: "Each market's own fund. It earns a share of fees and covers liquidation losses beyond a trader's margin.",
   insuranceShare: "Your stake in a market's insurance fund. It grows with fees and falls if liquidations lose money.",
-  adl: "Auto-deleveraging (ADL): if the insurance fund can't cover liquidation losses, winners on the other side are partly closed, most profitable first.",
+  adl: "Auto-deleveraging (ADL): if the insurance fund can't cover liquidation losses, winners on the other side are partly closed, most profitable first. Five bars mean a position would be among the first.",
   limbo: "Limbo: the seconds before a scheduled shutdown. Trading has stopped and the settlement price is about to be fixed.",
   settling: "Settling: every open position is closing at the market's final price. Withdrawals open once it's done.",
   terminated: "Terminated: the market has ended. Withdraw your collateral; it pays out at the market's final payout ratio.",
