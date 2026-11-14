@@ -206,9 +206,9 @@ export function MarketPage() {
               ))}
               <span className="grow" />
               {marks.length > 0 && (
-                // Yellow while it's on, that is while your lines are hidden.
-                <button className={showMine ? "" : "on"} onClick={toggleMine} aria-pressed={!showMine} title={showMine ? "Hide your orders and position on the chart" : "Your orders and position are hidden. Click to show them."}>
-                  Hide my orders
+                // Says what a click does: hide your lines while they show, show them while they're hidden.
+                <button onClick={toggleMine} title={showMine ? "Hide your orders and position on the chart" : "Show your orders and position on the chart"}>
+                  {showMine ? "Hide my orders" : "Show my orders"}
                 </button>
               )}
             </div>
