@@ -64,7 +64,8 @@ static host with no rewrite rules.
 
 Every push to `main` builds the app and deploys it to the Cloudflare Pages project `bazaar-app`
 ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)). It checks out the SDK beside the app,
-builds it, runs the typecheck, lint and tests, builds the app and uploads `dist/` with wrangler. It can
+builds it, runs the typecheck, lint and tests, builds the app, opens each page of the build in Chromium
+(the browser smoke tests below) and uploads `dist/` with wrangler. A failing step stops the deploy. It can
 also be run by hand from the Actions tab.
 
 In the GitHub repository's Settings > Secrets and variables > Actions:
@@ -145,6 +146,20 @@ The unit tests cover the board adapter (`test/board.test.ts`), history through t
 fallback (`test/subgraph.test.ts`), the relay flow with every status the relayer answers
 (`test/relay.test.ts`), the insurance return estimate (`test/insuranceReturn.test.ts`)
 and the smart-wallet check (`test/wallet.test.ts`).
+
+Browser smoke tests (Playwright, in `e2e/`) serve the production build with `vite preview` and open each
+page with no wallet connected: the markets list, a market's header, chart, order book and order ticket,
+the portfolio's wallet prompt, proposals and the leaderboard. Any uncaught error on a page fails them,
+apart from a third party's network failing (WalletConnect, an RPC out of reach). They read the live testnet
+and service, so they check what is on each page, not the numbers. Build first; Chromium is installed once:
+
+```bash
+npx playwright install chromium
+```
+
+```bash
+npm run build && npm run e2e
+```
 
 ## How it is put together
 
