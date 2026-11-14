@@ -25,6 +25,7 @@ import type { Address, Hex } from "viem";
 import { HistoryList } from "../components/History";
 import { HistoryLag } from "../components/HistoryLag";
 import { Modal } from "../components/Modal";
+import { YourActivity } from "../components/YourActivity";
 import { Empty, Loading, StatusBadge, Term, Tip, TxLink, useAsync } from "../components/ui";
 import { ACTIVE, addressUrl } from "../config/networks";
 import { explain, isKeeperOnly } from "../lib/errors";
@@ -1459,10 +1460,13 @@ function Identifier() {
 const PROPOSALS_PAGE = 10;
 
 type ProposalTab = "listings" | "terminations" | "identifier";
-const PROPOSAL_TABS: { id: ProposalTab; label: string }[] = [
+/** The page's tabs: one per kind of proposal, and the wallet's own proposals and votes. */
+type PageTab = ProposalTab | "activity";
+const PROPOSAL_TABS: { id: PageTab; label: string }[] = [
   { id: "listings", label: "Market listings" },
   { id: "terminations", label: "Terminations" },
   { id: "identifier", label: "UMA identifier" },
+  { id: "activity", label: "Your activity" },
 ];
 
 export function ProposalsPage() {
@@ -1476,7 +1480,15 @@ export function ProposalsPage() {
         <h1>Proposals</h1>
         <p className="muted">
           List new markets, end broken ones, and keep the UMA identifier current. Every proposal shows its bonds and what comes back before you sign. These are sent from your wallet and need a
-          little {ACTIVE.name} ETH for gas.
+          little {ACTIVE.name} ETH for gas. Learn more:{" "}
+          <a href={`${DOCS}/listing.html`} target="_blank" rel="noopener noreferrer">
+            listing ↗
+          </a>
+          ,{" "}
+          <a href={`${DOCS}/termination.html`} target="_blank" rel="noopener noreferrer">
+            termination ↗
+          </a>
+          .
         </p>
       </div>
       <HistoryLag />
@@ -1487,8 +1499,8 @@ export function ProposalsPage() {
           </button>
         ))}
       </div>
-      <HowItWorks tab={tab} />
-      {tab === "listings" ? <Listings /> : tab === "terminations" ? <Terminations /> : <Identifier />}
+      {tab !== "activity" && <HowItWorks tab={tab} />}
+      {tab === "listings" ? <Listings /> : tab === "terminations" ? <Terminations /> : tab === "identifier" ? <Identifier /> : <YourActivity />}
     </div>
   );
 }

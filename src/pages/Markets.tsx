@@ -9,6 +9,7 @@ import { Empty, Loading, PriceAge, StatusBadge, Term, Tip } from "../components/
 import { ACTIVE } from "../config/networks";
 import { dayChange } from "../lib/board";
 import { GLOSSARY } from "../lib/glossary";
+import { fundingHoursPerYear, hoursLabel, tradingHours } from "../lib/hours";
 import { pct, price, rate18, signedPct, usd } from "../lib/format";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import { useDayStats, useLiveAccount, useMarketSnapshots } from "../state/data";
@@ -80,6 +81,24 @@ function GettingStarted() {
         ))}
       </div>
     </section>
+  );
+}
+
+/** "24/7", "24/5" (around the clock on weekdays) or "trading hours", with the hours themselves on hover. */
+function HoursBadge({ m }: { m: mk.MarketInfo }) {
+  if (m.continuous) {
+    return (
+      <Tip text="Trades around the clock, every day: its price never pauses for a closed venue.">
+        <span className="badge">24/7</span>
+      </Tip>
+    );
+  }
+  const h = tradingHours(m.legFeeds);
+  const when = h?.text ? ` Open ${h.text}, ${h.zone} time${h.holidays ? ", closed or shorter on market holidays" : ""}.` : "";
+  return (
+    <Tip text={`${h?.kind === "24/5" ? "Trades around the clock on weekdays." : ""}${when} ${GLOSSARY.tradingHours}`.trim()}>
+      <span className="badge">{hoursLabel(m)}</span>
+    </Tip>
   );
 }
 
@@ -156,11 +175,7 @@ export function MarketsPage() {
                             <AssetIcon market={m} size={22} />
                             <b>{m.label}</b>
                           </span>
-                          {m.hours === "trading-hours" && (
-                            <Tip text={GLOSSARY.tradingHours}>
-                              <span className="badge">trading hours</span>
-                            </Tip>
-                          )}
+                          <HoursBadge m={m} />
                           {s?.venueClosed === true && (
                             <Tip text={GLOSSARY.venueClosed}>
                               <span className="badge warn">venue closed</span>
@@ -180,7 +195,7 @@ export function MarketsPage() {
                       <td className="num hide-sm">{oi !== null ? usd(oi) : "–"}</td>
                       <td className="num hide-sm">
                         {s ? (
-                          <Tip text={`${pct(mk.annualizedFunding(s.funding.currentRatePerHour, m.continuous ? undefined : 1_700))} a year at this rate. Positive: longs pay shorts.`}>
+                          <Tip text={`Annualized: ${pct(mk.annualizedFunding(s.funding.currentRatePerHour, fundingHoursPerYear(m)))}`}>
                             <span>{rate18(s.funding.currentRatePerHour)}</span>
                           </Tip>
                         ) : (

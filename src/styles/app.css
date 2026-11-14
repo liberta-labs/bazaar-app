@@ -443,7 +443,7 @@ main.full { max-width: none; padding: 8px 8px 16px; }
   background: var(--menu-bg); border: 1px solid var(--menu-border); border-radius: var(--radius); padding: 4px;
   display: flex; flex-direction: column; gap: 2px; box-shadow: 0 12px 30px var(--shadow);
 }
-.menu button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: none; background: transparent; text-align: left; white-space: normal; min-height: 0; padding: 8px 10px; }
+.menu button { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: none; background: transparent; text-align: left; white-space: normal; min-height: 0; padding: 8px 10px; }
 .menu button:hover { background: var(--hover-2); }
 .market-menu { min-width: 260px; max-height: 360px; overflow-y: auto; }
 .seg .menu { left: auto; right: 0; min-width: 240px; }
@@ -515,6 +515,8 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
   background: linear-gradient(var(--warn-bg), var(--warn-bg)), var(--bg);
 }
 .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.status-link { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.status-link:hover { color: var(--text); }
 .dot-s { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--muted); }
 .dot-s.ok { background: var(--up); }
 .dot-s.bad { background: var(--down); }
@@ -696,3 +698,7 @@ th.sortable[data-sort="desc"]::after { content: "\25BC\FE0E"; opacity: 1; color:
 .insurance-summary > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .insurance-summary .label { color: var(--muted); font-size: 12px; }
 .insurance-summary b { font-size: 15px; color: var(--strong); overflow-wrap: anywhere; }
+
+/* The trade page's market switcher: the ticker, and under it the name of what it trades. */
+.market-title { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.15; min-width: 0; }
+.market-sub { font-size: 11px; font-weight: 400; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

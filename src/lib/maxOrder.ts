@@ -34,6 +34,19 @@ export function maxOrderSize(p: { readonly free: bigint; readonly lev10: number;
 }
 
 /**
+ * The leverage an order uses, in tenths (20 is 2.0×), by the same rule as `maxOrderSize`: its notional
+ * over the collateral that backs it once the taker fee is paid. So Max at this leverage gives back about
+ * the same order, and the ticket asks no deposit for it. Rounded to the nearest tenth. Null when the
+ * collateral doesn't cover the order's fee, where only a deposit can back it.
+ */
+export function orderLev10(p: { readonly notional: bigint; readonly backing: bigint; readonly takerEbp: bigint }): number | null {
+  if (p.notional <= 0n) return 0;
+  const left = p.backing * EBP_SCALE - p.notional * p.takerEbp;
+  if (left <= 0n) return null;
+  return Number((p.notional * 20n * EBP_SCALE + left) / (2n * left));
+}
+
+/**
  * The largest size, up to `upTo`, that the pair's creation check accepts (previews.creationGate, the
  * SDK's copy of OrderManagementLib._creationShortfall): initial margin on the position the order leaves,
  * the order valued at the mark or worse (a market order at its far slippage bound), with resting orders,

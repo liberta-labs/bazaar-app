@@ -54,7 +54,7 @@ function useCandles(pair: string | undefined, interval: number) {
         const filled = history.fillCandleGaps([...before.items, ...rows], interval, before.items.length ? from : undefined, to);
         if (isDead()) return;
         setTrades(rows.reduce((s, c) => s + c.tradeCount, 0));
-        setCandles(filled.map((c) => ({ time: c.periodStart, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volumeSize })));
+        setCandles(filled.map((c) => ({ time: c.periodStart, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volumeSize, quiet: c.tradeCount === 0 })));
       } catch (e) {
         console.warn("candles", e);
         if (!isDead()) setCandles([]);
@@ -76,11 +76,11 @@ function useCandles(pair: string | undefined, interval: number) {
       setCandles((cs) => {
         const last = cs[cs.length - 1];
         if (last && last.time === t) {
-          return [...cs.slice(0, -1), { ...last, high: p > last.high ? p : last.high, low: p < last.low ? p : last.low, close: p, volume: last.volume + size }];
+          return [...cs.slice(0, -1), { ...last, high: p > last.high ? p : last.high, low: p < last.low ? p : last.low, close: p, volume: last.volume + size, quiet: false }];
         }
         const out = [...cs];
-        // Periods between the last candle and this one are flat at the last close.
-        if (last) for (let k = last.time + interval; k < t; k += interval) out.push({ time: k, open: last.close, high: last.close, low: last.close, close: last.close, volume: 0n });
+        // Periods between the last candle and this one are flat at the last close, with no trades.
+        if (last) for (let k = last.time + interval; k < t; k += interval) out.push({ time: k, open: last.close, high: last.close, low: last.close, close: last.close, volume: 0n, quiet: true });
         out.push({ time: t, open: last?.close ?? p, high: p, low: p, close: p, volume: size });
         return out;
       });

@@ -8,12 +8,13 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { dayChange } from "../lib/board";
 import { leverage, pct, price, rate18, signedPct, usd } from "../lib/format";
+import { assetName } from "../lib/assetName";
+import { fundingHoursPerYear, hoursLabel } from "../lib/hours";
 import { useBoard, useRead } from "../state/connection";
 import { useDayStats } from "../state/data";
 import { PriceAge, StatusBadge, Term, Tip } from "./ui";
 import { AssetIcon } from "./AssetIcon";
 
-const SESSION_HOURS = 1_700;
 
 export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; snap: mk.MarketSnapshot | undefined; spot: { spot: bigint; publishTime: number } | null; stored: boolean }) {
   const { markets: list } = useRead();
@@ -29,6 +30,7 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
     return () => window.removeEventListener("mousedown", close);
   }, [open]);
 
+  const name = assetName(info);
   const d = day.get(info.address);
   const day24 = dayChange(spot?.spot, prices?.dayAgo(info.address), d?.open);
   const change = day24?.change ?? null;
@@ -43,7 +45,15 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
         <button className="market-pick-btn" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}>
           <span className="market-name">
             <AssetIcon market={info} size={24} />
-            <b>{info.label}</b>
+            <span className="market-title">
+              <b>{info.label}</b>
+              {/* What it trades, under the ticker: from the listing's description, shown as text. */}
+              {name && (
+                <span className="market-sub" title={name}>
+                  {name}
+                </span>
+              )}
+            </span>
           </span>
           {maxLev !== null && <span className="badge">{leverage(maxLev).replace(".00", "")}</span>}
           <span className="muted">▾</span>
@@ -71,7 +81,7 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
                     <span className="mono">{p ? price(p.spot) : "–"}</span>
                   </span>
                   <span className="spread small" style={{ width: "100%" }}>
-                    <span className="muted">{m.hours === "24/7" ? "24/7" : "trading hours"}</span>
+                    <span className="muted">{hoursLabel(m)}</span>
                     <span className={ch === null ? "muted" : ch >= 0 ? "up" : "down"}>{ch === null ? "–" : signedPct(ch)}</span>
                   </span>
                 </button>
@@ -115,7 +125,7 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
           <Term t="funding">Funding (1h)</Term>
         </span>
         {funding !== null ? (
-          <Tip text={`${pct(mk.annualizedFunding(funding, info.continuous ? undefined : SESSION_HOURS))} a year at this rate. Positive: longs pay shorts. It accrues continuously.`}>
+          <Tip text={`Annualized: ${pct(mk.annualizedFunding(funding, fundingHoursPerYear(info)))}`}>
             <span className={`mono ${funding > 0n ? "down" : funding < 0n ? "up" : ""}`}>{rate18(funding)}</span>
           </Tip>
         ) : (

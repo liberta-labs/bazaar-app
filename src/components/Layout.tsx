@@ -16,10 +16,10 @@ import { Tip } from "./ui";
 
 const LINKS = [
   { to: "/", label: "Markets", end: true },
-  { to: "/portfolio", label: "Portfolio" },
   { to: "/earn", label: "Earn" },
   { to: "/proposals", label: "Proposals" },
-  { to: "/profile", label: "Profile" },
+  { to: "/portfolio", label: "Portfolio" },
+  { to: "/leaderboard", label: "Leaderboard" },
 ];
 
 function ConnectButton() {
@@ -211,6 +211,9 @@ function StatusBar() {
           ◇ {block.toLocaleString()}
         </span>
       )}
+      <a className="status-link" href="https://docs.bazaar.finance/" target="_blank" rel="noopener noreferrer">
+        Docs ↗
+      </a>
     </footer>
   );
 }

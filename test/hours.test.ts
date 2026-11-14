@@ -1,6 +1,6 @@
 import type { ProSymbol } from "@liberta-labs/bazaar-sdk";
 import { describe, expect, it } from "vitest";
-import { feedSchedule, parseSchedule, tradingHours } from "../src/lib/hours";
+import { FALLBACK_SESSION_HOURS, feedSchedule, fundingHoursPerYear, parseSchedule, tradingHours } from "../src/lib/hours";
 
 // Schedules as Pyth's registry writes them.
 const NY = "America/New_York";
@@ -87,5 +87,32 @@ describe("tradingHours", () => {
     expect(tradingHours([null], sameClock)).toBeNull();
     expect(tradingHours([feed("garbage")], sameClock)).toBeNull();
     expect(tradingHours([feed(`${NY};C,C,C,C,C,C,C;`)], sameClock)).toBeNull();
+  });
+});
+
+describe("fundingHoursPerYear", () => {
+  const market = (legFeeds: (ProSymbol | null)[], continuous = false) => ({ continuous, legFeeds });
+  const stock = feed(REGULAR, { regular: REGULAR, pre: PRE, post: POST, overnight: NIGHT });
+
+  it("counts every hour of the year on a 24/7 market", () => {
+    expect(fundingHoursPerYear(market([feed(ALWAYS)], true))).toBe(8_760);
+  });
+
+  it("counts the hours a week the prices are live, times 365/7: about 6,260 for 24/5, about 1,700 for regular hours", () => {
+    // Sunday 20:00 to Friday 20:00 in New York: 120 hours a week.
+    expect(fundingHoursPerYear(market([stock]))).toBeCloseTo((120 * 365) / 7, 6);
+    // 09:30 to 16:00 on weekdays: 32.5 hours a week.
+    expect(fundingHoursPerYear(market([feed(REGULAR, { regular: REGULAR })]))).toBeCloseTo((32.5 * 365) / 7, 6);
+  });
+
+  it("counts only the hours every leg of a composite is live", () => {
+    expect(fundingHoursPerYear(market([stock, feed(REGULAR, { regular: REGULAR })]))).toBeCloseTo((32.5 * 365) / 7, 6);
+  });
+
+  it("falls back to regular hours when the schedule can't be read", () => {
+    expect(fundingHoursPerYear(market([null]))).toBe(FALLBACK_SESSION_HOURS);
+    expect(fundingHoursPerYear(market([feed("not a schedule")]))).toBe(FALLBACK_SESSION_HOURS);
+    expect(fundingHoursPerYear(market([feed(TOKYO), feed(REGULAR)]))).toBe(FALLBACK_SESSION_HOURS);
+    expect(fundingHoursPerYear(market([]))).toBe(FALLBACK_SESSION_HOURS);
   });
 });

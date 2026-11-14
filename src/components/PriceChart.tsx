@@ -25,6 +25,13 @@ export interface ChartCandle {
   readonly low: bigint;
   readonly close: bigint;
   readonly volume: bigint;
+  /** No trades in this period: the previous close carried forward so the time axis has no holes. Drawn faint gray. */
+  readonly quiet?: boolean;
+}
+
+/** A theme color at half strength, for periods with no trades; as it is when it isn't a plain hex color. */
+function faint(color: string): string {
+  return /^#[0-9a-f]{6}$/i.test(color.trim()) ? `${color.trim()}80` : color;
 }
 
 /** The theme's colors, read from its CSS variables: the chart draws on a canvas, which can't use them directly. */
@@ -53,7 +60,9 @@ export function PriceChart({ candles, oracle, precision }: { candles: readonly C
       handleScroll: { vertTouchDrag: false },
     });
     const s = ch.addSeries(CandlestickSeries, {});
-    const v = ch.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol" });
+    // Volume is in the base asset (0.0013 BTC), which the axis label would round to "0": the bars show
+    // it, with no label or line of their own.
+    const v = ch.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
     ch.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
     chart.current = ch;
     series.current = s;
@@ -93,10 +102,16 @@ export function PriceChart({ candles, oracle, precision }: { candles: readonly C
     const s = series.current;
     const v = volume.current;
     if (!s || !v) return;
+    // A period with no trades would draw as a green tick at the last price, which reads as trading;
+    // faint gray keeps the time axis whole without claiming activity.
+    const quiet = faint(c.muted);
     s.setData(
-      candles.map((k) => ({ time: k.time as UTCTimestamp, open: toNumber18(k.open), high: toNumber18(k.high), low: toNumber18(k.low), close: toNumber18(k.close) })),
+      candles.map((k) => {
+        const bar = { time: k.time as UTCTimestamp, open: toNumber18(k.open), high: toNumber18(k.high), low: toNumber18(k.low), close: toNumber18(k.close) };
+        return k.quiet ? { ...bar, color: quiet, borderColor: quiet, wickColor: quiet } : bar;
+      }),
     );
-    v.setData(candles.map((k) => ({ time: k.time as UTCTimestamp, value: toNumber18(k.volume), color: k.close >= k.open ? c["volume-up"] : c["volume-down"] })));
+    v.setData(candles.map((k) => ({ time: k.time as UTCTimestamp, value: toNumber18(k.volume), color: k.quiet ? quiet : k.close >= k.open ? c["volume-up"] : c["volume-down"] })));
   }, [candles, c]);
 
   useEffect(() => {

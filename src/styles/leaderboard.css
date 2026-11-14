@@ -1,0 +1,136 @@
+/* The leaderboard page (pages/Leaderboard.tsx). Colors build on app.css's theme variables; the medal
+   tints are translucent so they sit on either theme's panels. */
+.lb {
+  --gold: #f5c518;
+  --silver: #b9c2cc;
+  --bronze: #d08a4b;
+  --gold-tint: rgba(245, 197, 24, 0.16);
+  --silver-tint: rgba(185, 194, 204, 0.14);
+  --bronze-tint: rgba(208, 138, 75, 0.16);
+  --flame: #ff7a1a;
+}
+:root[data-theme="light"] .lb {
+  --gold: #b88a00;
+  --silver: #7d8792;
+  --bronze: #a35f22;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .lb {
+    --gold: #b88a00;
+    --silver: #7d8792;
+    --bronze: #a35f22;
+  }
+}
+
+.lb-emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; line-height: 1; }
+
+/* The header and its rule chips. */
+.lb-hero h1 { display: flex; align-items: center; gap: 10px; }
+.lb-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.lb-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); font-size: 12px; color: var(--text);
+}
+
+/* The podium: second, first, third, the first standing tallest. */
+.lb-podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.lb-spot { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; min-width: 0; }
+.lb-spot .lb-who { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.lb-spot .lb-medal { font-size: 40px; filter: drop-shadow(0 4px 10px var(--shadow)); }
+.lb-spot.p1 .lb-medal { font-size: 52px; animation: lb-float 3s ease-in-out infinite; }
+.lb-crown { font-size: 26px; margin-bottom: -10px; animation: lb-float 3s ease-in-out infinite; }
+.lb-spot .lb-pts { font-family: var(--mono); font-size: 22px; color: var(--strong); font-weight: 700; }
+.lb-spot .lb-pts small { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+.lb-strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; font-size: 15px; min-height: 18px; }
+.lb-step {
+  width: 100%; border-radius: var(--radius) var(--radius) 0 0; border: 1px solid var(--border); border-bottom: none;
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 10px;
+  font-family: var(--mono); font-size: 28px; font-weight: 800; color: var(--muted);
+}
+.lb-spot.p1 .lb-step { height: 110px; background: linear-gradient(180deg, var(--gold-tint), transparent); border-color: var(--gold); color: var(--gold); }
+.lb-spot.p2 .lb-step { height: 80px; background: linear-gradient(180deg, var(--silver-tint), transparent); border-color: var(--silver); color: var(--silver); }
+.lb-spot.p3 .lb-step { height: 56px; background: linear-gradient(180deg, var(--bronze-tint), transparent); border-color: var(--bronze); color: var(--bronze); }
+.lb-podium-base { height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--silver), var(--gold), var(--bronze)); opacity: 0.6; }
+
+/* Your progress. */
+.lb-me-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.lb-level-icon {
+  width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-size: 30px;
+  background: var(--warn-bg); border: 2px solid var(--accent-line);
+}
+.lb-level-name { font-size: 20px; font-weight: 700; color: var(--strong); }
+.lb-me-score { margin-left: auto; text-align: right; }
+.lb-me-score .lb-big { font-family: var(--mono); font-size: 28px; font-weight: 800; color: var(--accent-text); }
+
+.lb-bar { position: relative; height: 10px; border-radius: 999px; background: var(--track); overflow: hidden; }
+.lb-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--flame)); transition: width 0.6s ease; }
+.lb-bar-label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); margin: 12px 0 6px; }
+
+.lb-me-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 14px; }
+.lb-streak { display: flex; align-items: center; gap: 12px; }
+.lb-streak .lb-flame { font-size: 36px; }
+.lb-streak.on .lb-flame { animation: lb-flicker 1.4s ease-in-out infinite; transform-origin: 50% 90%; }
+.lb-streak.atRisk { border-color: var(--accent-line); animation: lb-pulse 2s ease-in-out infinite; }
+.lb-streak .lb-big { font-family: var(--mono); font-size: 22px; font-weight: 800; color: var(--strong); }
+
+.lb-next {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding: 10px 12px;
+  border: 1px dashed var(--accent-line); border-radius: var(--radius); background: var(--warn-bg);
+}
+.lb-next .lb-emoji { font-size: 26px; }
+.lb a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; }
+.lb a.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.lb-done-all { margin-top: 14px; padding: 12px; border-radius: var(--radius); border: 1px solid var(--up-line); background: var(--up-bg); text-align: center; font-weight: 600; color: var(--strong); }
+
+/* The badge collection. */
+.lb-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+.lb-badge {
+  position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
+  padding: 14px 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.lb-badge:hover { transform: translateY(-2px); box-shadow: 0 8px 20px var(--shadow); }
+.lb-badge .lb-badge-icon {
+  width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; font-size: 28px;
+  background: var(--track); border: 2px dashed var(--border-strong);
+}
+.lb-badge.locked .lb-badge-icon .lb-emoji { filter: grayscale(1); opacity: 0.45; }
+.lb-badge.earned { border-color: var(--up-line); background: linear-gradient(180deg, var(--up-bg), var(--panel-2) 70%); }
+.lb-badge.earned .lb-badge-icon { border: 2px solid var(--up); background: var(--up-bg); box-shadow: 0 0 16px var(--up-line); }
+.lb-badge .lb-badge-label { font-weight: 700; color: var(--strong); font-size: 13px; }
+.lb-badge .lb-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.lb-badge.earned .lb-tag { color: var(--up); border-color: var(--up-line); }
+.lb-badge.locked .lb-tag { color: var(--accent-text); border-color: var(--accent-line); }
+
+/* The standings. */
+.lb-table td.lb-rank { font-size: 18px; }
+.lb-table tr.lb-mine td { background: var(--warn-bg); }
+.lb-table .lb-strip { justify-content: flex-start; font-size: 14px; }
+
+@keyframes lb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes lb-flicker {
+  0%, 100% { transform: scale(1) rotate(-2deg); }
+  25% { transform: scale(1.08) rotate(2deg); }
+  50% { transform: scale(0.96) rotate(-1deg); }
+  75% { transform: scale(1.05) rotate(1deg); }
+}
+@keyframes lb-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-line); } 50% { box-shadow: 0 0 0 4px transparent; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .lb *, .lb *::before, .lb *::after { animation: none !important; transition: none !important; }
+}
+
+@media (max-width: 720px) {
+  .lb-me-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .lb-me-grid > :first-child { grid-column: 1 / -1; }
+  .lb-me-score { margin-left: 0; text-align: left; flex-basis: 100%; }
+  .lb-podium { gap: 6px; }
+  .lb-spot .lb-medal { font-size: 30px; }
+  .lb-spot.p1 .lb-medal { font-size: 38px; }
+  .lb-spot .lb-pts { font-size: 16px; }
+  .lb-spot .lb-strip { display: none; }
+  .lb-spot.p1 .lb-step { height: 80px; }
+  .lb-spot.p2 .lb-step { height: 58px; }
+  .lb-spot.p3 .lb-step { height: 40px; }
+  .lb-badges { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

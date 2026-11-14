@@ -1,10 +1,10 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { EarnPage } from "./pages/Earn";
+import { LeaderboardPage } from "./pages/Leaderboard";
 import { MarketPage } from "./pages/Market";
 import { MarketsPage } from "./pages/Markets";
 import { PortfolioPage } from "./pages/Portfolio";
-import { ProfilePage } from "./pages/Profile";
 import { ProposalsPage } from "./pages/Proposals";
 import { ActivityProvider } from "./state/activity";
 import { ConnectionProviders } from "./state/connection";
@@ -30,7 +30,9 @@ export function App() {
               <Route path="/earn" element={<EarnPage />} />
               <Route path="/proposals" element={<ProposalsPage />} />
               <Route path="/governance" element={<Navigate to="/proposals" replace />} />
-              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/leaderboard" element={<LeaderboardPage />} />
+              {/* Profile's parts live on Portfolio, Proposals ("Yours") and the wallet's own account panel. */}
+              <Route path="/profile" element={<Navigate to="/portfolio" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Layout>

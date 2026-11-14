@@ -1,12 +1,9 @@
 import { markets as mk, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
 import { useMemo } from "react";
 import { GLOSSARY } from "../lib/glossary";
-import { type TradingHoursText, tradingHours } from "../lib/hours";
+import { type TradingHoursText, fundingHoursPerYear, tradingHours } from "../lib/hours";
 import { bp, dateTime, leverage, pct, price, rate18, relative, sizeText, usd } from "../lib/format";
 import { StatusBadge, Term, Tip } from "./ui";
-
-/** Hours a trading-hours market accrues funding in a year (about a US equity session's). */
-const SESSION_HOURS = 1_700;
 
 const HOURS_LABEL: Record<TradingHoursText["kind"], string> = { "24/7": "24/7", "24/5": "24/5", hours: "Market hours" };
 /** Keeps a time range, or a time zone's name, on one line when the column is narrow. */
@@ -19,7 +16,7 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
   const maxLev = previews.maxLeverage(snap.margin.imrBp);
   const warmup = snap.warmup;
   const funding = snap.funding.currentRatePerHour;
-  const annual = mk.annualizedFunding(funding, m.continuous ? undefined : SESSION_HOURS);
+  const annual = mk.annualizedFunding(funding, fundingHoursPerYear(m));
   const oi = snap.openInterest;
   const targetFund = ((oi.longNotional + oi.shortNotional) * snap.insurance.targetRatioBp) / 10_000n;
   const markVsOracle = snap.markPrice > 0n && oracle ? toNumber18(snap.markPrice - oracle) / toNumber18(oracle) : null;

@@ -17,6 +17,8 @@ import { useSort } from "../state/sort";
 import { useTx } from "../state/tx";
 
 const TRADE_PAGES = 10;
+/** The protocol docs' page on the insurance fund. */
+const INSURANCE_DOCS = "https://docs.bazaar.finance/protocol/insurance.html";
 
 type Pair = markets.MarketInfo["address"];
 const keyOf = (a: string) => a.toLowerCase();
@@ -603,7 +605,10 @@ export function EarnPage() {
         <h1>Earn by insuring markets</h1>
         <p className="muted">
           Every market has its own <Term t="insurance">insurance fund</Term>. Insurers earn the fund's share of that market's trading fees, and cover losses when a liquidation can't pay its
-          way. Estimates below are past performance, not a promise: liquidation losses can reduce share value.
+          way. Estimates below are past performance, not a promise: liquidation losses can reduce share value.{" "}
+          <a href={INSURANCE_DOCS} target="_blank" rel="noopener noreferrer">
+            Learn more ↗
+          </a>
         </p>
       </div>
       <HistoryLag />

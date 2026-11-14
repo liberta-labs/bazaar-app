@@ -27,7 +27,7 @@ import { ACTIVE } from "../config/networks";
 import { explain, inputSentence } from "../lib/errors";
 import { amount, ceilDiv, leverage as fmtLev, parseInput, price as fmtPrice, toInput, usd } from "../lib/format";
 import { depositPart, orderPart } from "../lib/jobs";
-import { GATE_ROOM_BP, MAX_ROOM_BP, maxGateSize, maxOrderSize, takerFeeEbp } from "../lib/maxOrder";
+import { GATE_ROOM_BP, MAX_ROOM_BP, maxGateSize, maxOrderSize, orderLev10, takerFeeEbp } from "../lib/maxOrder";
 import { effectLabel, orderEffect } from "../lib/orderEffect";
 import { type FarSide, unfilledText } from "../lib/unfilled";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
@@ -160,7 +160,12 @@ export function OrderTicket({
   // Editing the amount drops it, and so does anything that changes what it closes; switching the unit
   // keeps it.
   const [exactSize, setExactSize] = useState<bigint | null>(null);
-  useEffect(() => setExactSize(null), [side, market.address, position?.size]);
+  // Whether the slider or Max set the amount (sized at the chosen leverage) rather than the user typing it.
+  const [slid, setSlid] = useState(false);
+  useEffect(() => {
+    setExactSize(null);
+    setSlid(false);
+  }, [side, market.address, position?.size]);
 
   const size: bigint | null = useMemo(() => {
     if (isTpSl && closeAll) return orders.CLOSE_POSITION;
@@ -292,13 +297,13 @@ export function OrderTicket({
   // What backs new exposure: the free collateral, or on a flip everything the closed position leaves
   // (its equity, less the fee on closing it).
   const backing = opposite && held ? held.equity - (held.currentNotional * feeEbp) / EBP_SCALE : free;
-  const openMax = sizingPrice
-    ? maxOrderSize({ free: backing, lev10, price: maxMark && maxMark > sizingPrice ? maxMark : sizingPrice, takerEbp: feeEbp, roomBp: (kind === "market" ? (slippageBp ?? 0n) : 0n) + MAX_ROOM_BP })
-    : null;
-  const upTo = (opposite && position ? position.size : 0n) + (openMax ?? 0n);
   // Two limits, the smaller wins: the leverage rule above, and the pair's own creation check on the
-  // position the order leaves, searched with the SDK's copy of it.
-  const gateMax = (() => {
+  // position the order leaves, searched with the SDK's copy of it. At leverage `l10` (in tenths).
+  const largestAt = (l10: number): bigint | null => {
+    const openMax = sizingPrice
+      ? maxOrderSize({ free: backing, lev10: l10, price: maxMark && maxMark > sizingPrice ? maxMark : sizingPrice, takerEbp: feeEbp, roomBp: (kind === "market" ? (slippageBp ?? 0n) : 0n) + MAX_ROOM_BP })
+      : null;
+    const upTo = (opposite && position ? position.size : 0n) + (openMax ?? 0n);
     if (upTo === 0n) return null;
     if (!acct || !maxMark || !held) return upTo;
     const g = maxGateSize({
@@ -315,7 +320,16 @@ export function OrderTicket({
       roomBp: GATE_ROOM_BP,
     });
     return g > 0n ? g : null;
-  })();
+  };
+  const gateMax = largestAt(lev10);
+  // The leverage a typed amount uses: its notional (on a flip, the part past the held position) over the
+  // collateral that backs it, by the same rule as Max. Below the chosen leverage the slider shows it,
+  // since nothing in the order raises it; above, the deposit brings it down to the chosen one.
+  const opening = size !== null && size !== orders.CLOSE_POSITION ? (opposite && position ? size - position.size : size) : 0n;
+  const typedLev10 =
+    !isTpSl && !reduces && opening > 0n && sizingPrice && backing > 0n ? orderLev10({ notional: (opening * sizingPrice) / E18, backing, takerEbp: feeEbp }) : null;
+  // An amount the slider or Max set was sized at the chosen leverage, so the slider keeps showing that.
+  const shownLev10 = !slid && typedLev10 !== null && typedLev10 < lev10 ? typedLev10 : lev10;
   // Close: the whole held position, exactly. Max: the largest order (on the far side, a flip into the
   // largest opposite position), except where only closing is allowed: a take-profit or stop-loss, or a
   // reduce-only order.
@@ -342,6 +356,16 @@ export function OrderTicket({
     if (unit === "base") setAmountText(toInput((s / 10n ** 12n) * 10n ** 12n, 6));
     else setAmountText(toInput(((s * sizingPrice) / E18 / CENT) * CENT, 2));
     setExactSize(exact ? s : null);
+    setSlid(!exact);
+  };
+  // Dragging the slider. An amount the slider or Max set follows it, as the most the collateral backs at
+  // the new leverage. A typed amount stays when the slider goes down (the deposit lowers its leverage),
+  // and grows the same way when it goes past the amount's own leverage, which only a larger order reaches.
+  const slide = (l10: number) => {
+    setLev10(l10);
+    if (size === null || size === orders.CLOSE_POSITION || typedLev10 === null || (!slid && l10 <= typedLev10)) return;
+    const s = largestAt(l10);
+    if (s !== null) fillSize(s, false);
   };
   const shortfall = preview?.margin.shortfall ?? 0n;
   let deposit = 0n;
@@ -555,8 +579,8 @@ export function OrderTicket({
       {!isTpSl && !reduces && (
         <div className="lev-row">
           <Term t="leverage">Leverage</Term>
-          <input type="range" min={10} max={maxLev10} step={1} value={lev10} onChange={(e) => setLev10(Number(e.target.value))} aria-label="Leverage" />
-          <span className="mono accent">{lev.toFixed(1)}×</span>
+          <input type="range" min={10} max={maxLev10} step={1} value={Math.max(10, shownLev10)} onChange={(e) => slide(Number(e.target.value))} aria-label="Leverage" />
+          <span className="mono accent">{shownLev10 > 0 ? (shownLev10 / 10).toFixed(1) : "<0.1"}×</span>
         </div>
       )}
       <div className="spread small">
@@ -607,6 +631,7 @@ export function OrderTicket({
             value={amountText}
             onChange={(e) => {
               setExactSize(null);
+              setSlid(false);
               setAmountText(e.target.value);
             }}
             aria-label="Amount"
@@ -763,8 +788,8 @@ export function OrderTicket({
 
       {deposit > 0n && !disabled && (
         <div className="callout small">
-          {shortfall > 0n ? `You need ${usd(shortfall)} more collateral on ${market.label} for this order.` : `For ${lev.toFixed(1)}× leverage you'll add collateral on ${market.label}.`} We'll deposit{" "}
-          {usd(deposit)} from your wallet first, then place the order.
+          {shortfall > 0n ? `You need ${usd(shortfall)} more collateral on ${market.label} for this order.` : `For ${lev.toFixed(1)}× leverage you'll add collateral on ${market.label}.`} Your wallet will
+          ask you to approve a {usd(deposit)} deposit first{deposit === MIN_COLLATERAL_DEPOSIT ? ` (the ${usd(MIN_COLLATERAL_DEPOSIT)} minimum)` : ""}, then the order.
         </div>
       )}
       {walletShort && (
@@ -777,11 +802,10 @@ export function OrderTicket({
           {preview.cancelReason !== "Unfilled"
             ? `Part of it would be cancelled (${preview.cancelReason}).`
             : kind === "limit"
-              ? unfilledText({ kind: "limit", isLong, limitPrice: limitPrice ?? 0n }, preview.takerSize, base)
+              ? unfilledText({ kind: "limit", isLong, limitPrice: limitPrice ?? 0n }, preview.takerSize > 0n)
               : unfilledText(
                   { kind: "market", isLong, oracle: preview.mark, slippageBp: slippageBp ?? 0n, maxSlippageBp: APP_MAX_SLIPPAGE_BP, far: far?.key === farKey ? far.side : null },
-                  preview.takerSize,
-                  base,
+                  preview.takerSize > 0n,
                 )}
         </p>
       )}

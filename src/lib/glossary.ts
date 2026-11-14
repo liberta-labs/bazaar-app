@@ -31,8 +31,10 @@ export const GLOSSARY = {
   live: "Live: trading normally.",
   warmup:
     "New markets are capped at 5x leverage (2.5x if they follow trading hours) until they are 15 days old and have stored 25,000 prices, so margins are set from real price history. A price is stored each time a trade, a liquidation or a keeper refresh brings one in.",
-  tradingHours: "This market follows its venue's trading hours (stocks, FX). While the venue is closed it runs on its last price and market orders are paused.",
-  venueClosed: "The venue is closed: this market runs on its last price, fills are held within 10% of it, and market orders resume at the reopen. Limit orders still work.",
+  tradingHours:
+    "This market follows its venue's trading hours (stocks, FX). While the venue is closed it runs on its last price and market orders are paused, but you can still trade with limit orders: they rest in the book and fill against other traders' orders.",
+  venueClosed:
+    "The venue is closed: this market runs on its last price, fills are held within 10% of it, and market orders resume at the reopen. You can still trade with limit orders in the meantime: they rest in the book and fill against other traders' orders.",
   postOnly: "Post-only: the order is cancelled instead of trading immediately, so you only ever add liquidity (and pay the lower maker fee).",
   tif: "Time in force. GTC rests in the book until filled or expired; IOC fills what it can now and cancels the rest; FOK fills completely now or not at all.",
   slippage:

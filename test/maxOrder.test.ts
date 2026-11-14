@@ -1,6 +1,6 @@
 import { BAZAAR_SCALE, EBP_SCALE, previews } from "@liberta-labs/bazaar-sdk";
 import { describe, expect, it } from "vitest";
-import { maxGateSize, maxOrderSize, takerFeeEbp } from "../src/lib/maxOrder";
+import { maxGateSize, maxOrderSize, orderLev10, takerFeeEbp } from "../src/lib/maxOrder";
 
 const X = BAZAAR_SCALE;
 const usd = (n: number) => BigInt(n) * X;
@@ -26,6 +26,30 @@ describe("maxOrderSize", () => {
   it("is nothing without collateral or a price", () => {
     expect(maxOrderSize({ free: 0n, lev10: 50, price: usd(100), takerEbp: 100n, roomBp: 0n })).toBeNull();
     expect(maxOrderSize({ free: usd(10), lev10: 50, price: 0n, takerEbp: 100n, roomBp: 0n })).toBeNull();
+  });
+});
+
+describe("orderLev10", () => {
+  it("is the order's notional over the collateral left after the fee", () => {
+    // $200 on $100 of collateral, no fee: 2.0x.
+    expect(orderLev10({ notional: usd(200), backing: usd(100), takerEbp: 0n })).toBe(20);
+    // $250 on $100 with a 1% fee: 250 / (100 - 2.50) = 2.56x, so 2.6x.
+    expect(orderLev10({ notional: usd(250), backing: usd(100), takerEbp: EBP_SCALE / 100n })).toBe(26);
+    // $20 on $100: 0.2x, below the slider's 1x.
+    expect(orderLev10({ notional: usd(20), backing: usd(100), takerEbp: 100n })).toBe(2);
+  });
+
+  it("gives back the leverage Max sized the order at", () => {
+    for (const lev10 of [10, 25, 37, 50]) {
+      const size = maxOrderSize({ free: usd(1_000), lev10, price: usd(100), takerEbp: 300n, roomBp: 0n })!;
+      expect(orderLev10({ notional: (size * usd(100)) / X, backing: usd(1_000), takerEbp: 300n })).toBe(lev10);
+    }
+  });
+
+  it("is nothing when the collateral can't pay the fee, and zero for no order", () => {
+    expect(orderLev10({ notional: usd(200), backing: 0n, takerEbp: 100n })).toBeNull();
+    expect(orderLev10({ notional: usd(1_000_000), backing: usd(1), takerEbp: EBP_SCALE / 100n })).toBeNull();
+    expect(orderLev10({ notional: 0n, backing: usd(100), takerEbp: 100n })).toBe(0);
   });
 });
 

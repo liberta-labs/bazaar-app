@@ -202,3 +202,38 @@ function viewerOffset(zone: string): number | null {
     return null;
   }
 }
+
+/**
+ * A market's hours in a word or two, for lists and pickers: "24/7" for a continuously traded market,
+ * "24/5" for one whose feeds trade around the clock on weekdays, else "trading hours" (set hours, or a
+ * schedule that can't be read).
+ */
+export function hoursLabel(m: { readonly continuous: boolean; readonly legFeeds: readonly (ProSymbol | null)[] }): "24/7" | "24/5" | "trading hours" {
+  if (m.continuous) return "24/7";
+  return tradingHours(m.legFeeds)?.kind === "24/5" ? "24/5" : "trading hours";
+}
+
+/** Hours a year in a 24/7 market. */
+const YEAR_HOURS = 24 * 365;
+/** A US stock's regular session, 6.5 hours a weekday: the assumption when a market's schedule can't be read. */
+export const FALLBACK_SESSION_HOURS = 1_700;
+
+/**
+ * The hours a year a market accrues funding, for showing an hourly rate as a yearly one. The pair
+ * accrues funding only while its price is live (FundingLib), so it's every hour of the year on a 24/7
+ * market, and on any other the hours a week all its legs have live prices, times 365/7: about 6,260 for a
+ * stock traded around the clock on weekdays (24/5), about 1,700 for one traded in regular hours alone.
+ * Holidays aren't taken off. A schedule that can't be read counts as regular hours.
+ */
+export function fundingHoursPerYear(m: { readonly continuous: boolean; readonly legFeeds: readonly (ProSymbol | null)[] }): number {
+  if (m.continuous) return YEAR_HOURS;
+  const legs = m.legFeeds;
+  if (legs.length === 0 || legs.some((l) => l === null)) return FALLBACK_SESSION_HOURS;
+  const schedules = legs.map((l) => feedSchedule(l!));
+  if (schedules.some((s) => s === null)) return FALLBACK_SESSION_HOURS;
+  const all = schedules as WeekSchedule[];
+  if (all.some((s) => s.zone !== all[0]!.zone)) return FALLBACK_SESSION_HOURS;
+  let minutes = 0;
+  for (let t = 0; t < WEEK; t++) if (all.every((s) => s.open[t])) minutes++;
+  return minutes === 0 ? FALLBACK_SESSION_HOURS : (minutes / 60) * (365 / 7);
+}
