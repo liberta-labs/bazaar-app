@@ -27,6 +27,13 @@ export const wagmiAdapter = new WagmiAdapter({ networks, projectId: REOWN_PROJEC
 
 const origin = typeof window !== "undefined" ? window.location.origin : "https://bazaar.finance";
 
+/**
+ * The icon wallets show for this app. An email or social login's signature window runs on Reown's own
+ * https site, which can't load an image from http://localhost (the browser upgrades it to https, and
+ * that fails), so a local run points at the deployed copy.
+ */
+const ICON_URL = origin.startsWith("https://") ? `${origin}/bazaar-icon.png` : "https://app.bazaar.finance/bazaar-icon.png";
+
 export const appKit = createAppKit({
   adapters: [wagmiAdapter],
   networks,
@@ -36,8 +43,8 @@ export const appKit = createAppKit({
     name: "Bazaar",
     description: "Perpetual futures on Arbitrum, with an insurance fund for every market",
     url: origin,
-    // The icon wallets show for this app (connect prompts, WalletConnect sessions, signature requests).
-    icons: [`${origin}/bazaar-icon.png`],
+    // Shown on connect prompts, WalletConnect sessions and signature requests.
+    icons: [ICON_URL],
   },
   // Email and social logins as plain (EOA) wallets: AppKit's default for them is a smart account, which
   // the pairs can't verify. Settings saved in the project's Reown dashboard override the two switches below.
