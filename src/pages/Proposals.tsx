@@ -595,16 +595,20 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
           disabled={!resolved || !desc || !!descErr || !!blocker || parseInput(total) === null}
           onClick={() =>
             resolved &&
-            void costed.run("Propose a market", (bz, user) =>
-              bz.listings.proposePairDeployment({
-                baseFeedId: resolved.feedId,
-                isContinuouslyTraded: continuous,
-                totalAmount: parseUnits18(total.trim()),
-                description: desc,
-                from: user,
-                // The connection has no Pyth Pro source, so name the registry for the builder's own check.
-                registry: PYTH_PRO.symbolsUrl,
-              }),
+            void costed.run(
+              "Propose a market",
+              (bz, user) =>
+                bz.listings.proposePairDeployment({
+                  baseFeedId: resolved.feedId,
+                  isContinuouslyTraded: continuous,
+                  totalAmount: parseUnits18(total.trim()),
+                  description: desc,
+                  from: user,
+                  // The connection has no Pyth Pro source, so name the registry for the builder's own check.
+                  registry: PYTH_PRO.symbolsUrl,
+                }),
+              // Once it lands, close the form; closing reloads the list, which now shows the proposal.
+              onClose,
             )
           }
         >
@@ -855,10 +859,14 @@ function ProposeTermination({ m, insurer, onClose }: { m: markets.MarketInfo; in
           className="primary"
           disabled={!Number.isFinite(cutoffTs) || (!insurer && (!reason || !!reasonErr))}
           onClick={() =>
-            void costed.run(insurer ? "Propose insurer vote" : "Propose termination", (bz, user) =>
-              insurer
-                ? bz.termination.proposeInsurerTermination({ pair: m.address, cutoffTs, from: user })
-                : bz.termination.proposeTermination({ pair: m.address, category, lastTradingTs: cutoffTs, reason, from: user }),
+            void costed.run(
+              insurer ? "Propose insurer vote" : "Propose termination",
+              (bz, user) =>
+                insurer
+                  ? bz.termination.proposeInsurerTermination({ pair: m.address, cutoffTs, from: user })
+                  : bz.termination.proposeTermination({ pair: m.address, category, lastTradingTs: cutoffTs, reason, from: user }),
+              // Once it lands, close the form and reload, as the listing form does.
+              onClose,
             )
           }
         >

@@ -1,8 +1,10 @@
 /**
  * Reown AppKit: one connect window for browser-extension wallets (every wallet that announces itself
- * through EIP-6963, MetaMask first) and phone or desktop wallets over WalletConnect. Email and social
- * logins, swaps and on-ramp are off: email and social logins create smart-contract wallets, which
- * cannot sign the gasless requests trading needs.
+ * through EIP-6963, MetaMask first), phone or desktop wallets over WalletConnect, and email or social
+ * login. A login makes a wallet Reown keeps for the user; it is a plain (EOA) wallet, not AppKit's
+ * default smart account, because the pairs check a gasless request's signature against the account's
+ * own key, which a smart account doesn't have. Its wallet still asks to approve each signature, in
+ * AppKit's own window. Swaps and on-ramp are off.
  *
  * The adapter is Reown's Wagmi adapter, as its React docs recommend. Nothing reads or writes through
  * wagmi: the app takes the wallet's EIP-1193 provider (useAppKitProvider) and hands it to the SDK.
@@ -37,9 +39,12 @@ export const appKit = createAppKit({
     // The icon wallets show for this app (connect prompts, WalletConnect sessions, signature requests).
     icons: [`${origin}/bazaar-icon.png`],
   },
+  // Email and social logins as plain (EOA) wallets: AppKit's default for them is a smart account, which
+  // the pairs can't verify. Settings saved in the project's Reown dashboard override the two switches below.
+  defaultAccountTypes: { eip155: "eoa" },
   features: {
-    email: false,
-    socials: false,
+    email: true,
+    socials: ["google", "x", "discord", "apple", "github"],
     swaps: false,
     onramp: false,
     send: false,

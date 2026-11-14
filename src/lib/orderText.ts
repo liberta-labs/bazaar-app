@@ -25,8 +25,21 @@ export function tifText(typeName: string, tif: number | string, postOnly: boolea
   return postOnly ? `${name} · post-only` : name;
 }
 
-/** Size at its limit price, else at its trigger; null for a market order. */
+/**
+ * The size a take-profit or stop-loss carries when it closes the whole position, whatever that is when it
+ * fires: uint128's largest value (the SDK's live orders read it as closesWholePosition). It stays on the
+ * order in history until it fires, when the pair caps it at the position.
+ */
+const WHOLE_POSITION = (1n << 128n) - 1n;
+
+/** A size that is the whole-position marker, not an amount. */
+export function closesWholePosition(size: bigint): boolean {
+  return size >= WHOLE_POSITION;
+}
+
+/** Size at its limit price, else at its trigger; null for a market order, or one that closes the whole position. */
 export function orderValue(typeName: string, size: bigint, limitPrice: bigint, triggerPrice: bigint): bigint | null {
+  if (closesWholePosition(size)) return null;
   const p = limitPrice > 0n ? limitPrice : TRIGGERED.has(typeName) ? triggerPrice : 0n;
   return p > 0n && size > 0n ? (size * p) / 10n ** 18n : null;
 }

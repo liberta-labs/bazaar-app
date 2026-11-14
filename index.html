@@ -9,11 +9,13 @@
     <link rel="apple-touch-icon" href="./bazaar-icon.png" />
     <title>Bazaar App</title>
     <script>
-      // Apply the saved theme (or the system's) before the first paint, so the page never flashes the other one.
+      // Apply the saved theme before the first paint, so the page never flashes the other one: dark unless
+      // the user chose light, or chose to follow the system (state/theme.tsx).
       (function () {
         var t = null;
         try { t = localStorage.getItem("bazaar.theme"); } catch (e) {}
-        if (t !== "light" && t !== "dark") t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        if (t === "system") t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        if (t !== "light") t = "dark";
         document.documentElement.dataset.theme = t;
       })();
     </script>

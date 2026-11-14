@@ -36,14 +36,19 @@ export function withdrawPart(pair: Address, amount: bigint): TxPart {
   return { kind: "relayed", label: "Withdraw collateral", pair, permit: false, input: () => ({ action: "withdrawCollateral", amount }) };
 }
 
-/** An order whose expiry (when it rests) is counted in Arbitrum blocks from the block at signing. */
-export function orderPart(readBz: Bazaar, pair: Address, order: orders.OrderInput, expirySeconds: number | null, label = "Place order"): TxPart {
+/**
+ * An order whose expiry (when it rests) is counted in Arbitrum blocks from the block at signing. Given as
+ * a function, the order itself is read at signing too, so a choice made on the confirmation (a close's
+ * slippage) is the one sent.
+ */
+export function orderPart(readBz: Bazaar, pair: Address, orderAt: orders.OrderInput | (() => orders.OrderInput), expirySeconds: number | null, label = "Place order"): TxPart {
   return {
     kind: "relayed",
     label,
     pair,
     permit: true,
     input: async () => {
+      const order = typeof orderAt === "function" ? orderAt() : orderAt;
       const rests = orders.canRest(order.orderType, order.tif ?? 0);
       const expirationBlock = rests && expirySeconds !== null ? (await readBz.ctx.chain.blockNumber()) + orders.blocksIn(expirySeconds) : undefined;
       return { action: "createOrder", order: { ...order, ...(expirationBlock !== undefined ? { expirationBlock } : {}) } };
@@ -65,7 +70,7 @@ export function cancelPart(pair: Address, ids: readonly bigint[], label?: string
 export function amendPart(pair: Address, amendments: readonly orders.AmendInput[]): TxPart {
   return {
     kind: "relayed",
-    label: amendments.length === 1 ? `Amend order #${amendments[0]!.orderId}` : `Amend ${amendments.length} orders`,
+    label: amendments.length === 1 ? `Edit order #${amendments[0]!.orderId}` : `Edit ${amendments.length} orders`,
     pair,
     permit: true,
     input: () => ({ action: "amendOrders", amendments }),

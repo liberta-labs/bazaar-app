@@ -15,7 +15,7 @@ import { Empty, Loading, Pnl, Term, TxLink } from "./ui";
 import { amount, dateTime, price, signedUsd, usd } from "../lib/format";
 import { type FundingPayment, fundingPayments, txPairKey } from "../lib/fundingHistory";
 import { mergeByTime } from "../lib/mergePages";
-import { orderValue, tifText, triggerCondition } from "../lib/orderText";
+import { closesWholePosition, orderValue, tifText, triggerCondition } from "../lib/orderText";
 import { type TradeRow, tradeRows } from "../lib/tradeRows";
 import { useRead, useWallet } from "../state/connection";
 import { useLiveAccount, usesMarket } from "../state/data";
@@ -189,6 +189,21 @@ function FundingHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
   );
 }
 
+/**
+ * An order's size, where a take-profit or stop-loss set to close the whole position reads as that rather
+ * than as its marker size (uint128's largest value), and sorts after the sized ones.
+ */
+function sizeColumn<T extends { readonly size: bigint }>(): HistoryColumn<T> {
+  return {
+    header: "Size",
+    csvHeader: "size",
+    num: true,
+    cell: (r) => (closesWholePosition(r.size) ? "whole position" : amount(r.size)),
+    csv: (r) => (closesWholePosition(r.size) ? "whole position" : formatUnits18(r.size)),
+    sort: (r) => (closesWholePosition(r.size) ? null : r.size),
+  };
+}
+
 function OrderHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
   const { historyVersion } = useLiveAccount();
   const { market } = useCommonColumns();
@@ -215,7 +230,7 @@ function OrderHistory({ readBz, user }: { readBz: Bazaar; user: Address }) {
           csv: (r) => [r.orderType, tifText(r.orderType, r.timeInForce, r.isPostOnly)].filter(Boolean).join(" "),
         },
         { header: "Side", csvHeader: "side", cell: (r) => <span className={r.isLong ? "up" : "down"}>{r.isLong ? "Buy" : "Sell"}</span>, csv: (r) => (r.isLong ? "buy" : "sell") },
-        { header: "Size", csvHeader: "size", num: true, cell: (r) => amount(r.size), csv: (r) => formatUnits18(r.size) },
+        sizeColumn(),
         { header: "Filled", csvHeader: "filled", num: true, cell: (r) => amount(r.filledSize), csv: (r) => formatUnits18(r.filledSize) },
         {
           header: "Order value",
@@ -386,6 +401,16 @@ function AccountActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
   );
 }
 
+/** The contract calls changing an order "amending"; the app calls it editing. */
+const ORDER_ACTION_TEXT: Record<string, string> = { Amended: "Edited", AmendSkipped: "Edit skipped" };
+const EDIT_SKIP_TEXT: Record<string, string> = {
+  Inactive: "The order was no longer in the book.",
+  Expired: "The order had expired.",
+  SizeFilled: "The new size wasn't above what had already filled.",
+  BelowMinimum: "What it left to fill was below the minimum order.",
+  WouldCross: "The new price would have crossed the book.",
+};
+
 function OrderActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
   const { historyVersion } = useLiveAccount();
   const { time, market, tx } = useCommonColumns();
@@ -400,14 +425,18 @@ function OrderActivity({ readBz, user }: { readBz: Bazaar; user: Address }) {
         time(),
         market(),
         { header: "Order", csvHeader: "order_id", cell: (r) => `#${r.orderId}`, csv: (r) => String(r.orderId) },
-        { header: "What happened", csvHeader: "action", cell: (r) => r.action, csv: (r) => r.action },
+        { header: "What happened", csvHeader: "action", cell: (r) => ORDER_ACTION_TEXT[r.action] ?? r.action, csv: (r) => r.action },
         {
           header: "Why",
           csvHeader: "reason",
-          cell: (r) => <span className="small">{r.action === "Canceled" ? history.CANCEL_REASON_TEXT[r.cancelReason] : r.amendSkipReason ?? ""}</span>,
+          cell: (r) => (
+            <span className="small">
+              {r.action === "Canceled" ? history.CANCEL_REASON_TEXT[r.cancelReason] : r.amendSkipReason ? (EDIT_SKIP_TEXT[r.amendSkipReason] ?? r.amendSkipReason) : ""}
+            </span>
+          ),
           csv: (r) => (r.action === "Canceled" ? history.CANCEL_REASON_TEXT[r.cancelReason] : (r.amendSkipReason ?? "")),
         },
-        { header: "Size", csvHeader: "size", num: true, cell: (r) => amount(r.size), csv: (r) => formatUnits18(r.size) },
+        sizeColumn(),
         { header: "Price", csvHeader: "limit_price", num: true, cell: (r) => (r.limitPrice > 0n ? price(r.limitPrice) : "–"), csv: (r) => formatUnits18(r.limitPrice) },
         tx(),
       ]}

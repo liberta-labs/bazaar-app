@@ -9,7 +9,7 @@ import { HAS_PROJECT_ID } from "../state/appkit";
 import { useBoard, useNow, useRead, useWallet } from "../state/connection";
 import { useDayStats } from "../state/data";
 import { usePoll } from "../state/poll";
-import { type ThemePref, useTheme } from "../state/theme";
+import { type ThemePref, nextPref, useTheme } from "../state/theme";
 import { FaucetButton } from "./Faucet";
 import { AssetIcon } from "./AssetIcon";
 import { Tip } from "./ui";
@@ -77,7 +77,7 @@ function Banners() {
       {w.kind === "contract" && w.address && dismissed !== w.address && (
         <div className="banner warn">
           <div className="grow">
-            <b>This is a smart-contract wallet.</b> You can browse, deposit collateral, cancel orders and request an insurance withdrawal. You can't place or amend orders, withdraw collateral, deposit into insurance or finish leaving it: {CONTRACT_WALLET_REASON.split(". ")[0]}.
+            <b>This is a smart-contract wallet.</b> You can browse, deposit collateral, cancel orders and request an insurance withdrawal. You can't place or edit orders, withdraw collateral, deposit into insurance or finish leaving it: {CONTRACT_WALLET_REASON.split(". ")[0]}.
           </div>
           <button className="small" onClick={dismissSmart}>
             Got it
@@ -221,10 +221,10 @@ function StatusBar() {
 const THEME_LABEL: Record<ThemePref, string> = { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" };
 const THEME_ICON: Record<ThemePref, string> = { system: "◐", light: "☀", dark: "☾" };
 
-/** System, light or dark; each click moves to the next. */
+/** Dark, light or system; each click moves to the next. */
 function ThemeButton() {
   const { pref, cycle } = useTheme();
-  const next = pref === "system" ? "light" : pref === "light" ? "dark" : "system";
+  const next = nextPref(pref);
   return (
     <Tip text={`${THEME_LABEL[pref]}. Click for ${next}.`}>
       <button className="icon-btn" onClick={cycle} aria-label={`${THEME_LABEL[pref]}; switch to ${next}`}>

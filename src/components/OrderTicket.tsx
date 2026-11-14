@@ -4,7 +4,8 @@
  * and the keeper bounty. The order is checked as the user types with the SDK's own buildOrderSpec
  * (the pair's rules, against the board's price), and previewed with previewOrder before anything is
  * signed. When the market's collateral falls short, one button deposits the difference and then
- * places the order.
+ * places the order. With no collateral on the market and no amount typed, the button opens the deposit
+ * window instead ("Deposit to Get Started").
  */
 import {
   type account,
@@ -33,7 +34,9 @@ import { type FarSide, unfilledText } from "../lib/unfilled";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import { type TxReview, useTx } from "../state/tx";
+import { CollateralPanel } from "./Collateral";
 import { FaucetButton } from "./Faucet";
+import { Modal } from "./Modal";
 import { ActionButton, Term, Tip } from "./ui";
 
 type Kind = "market" | "limit" | "stopLimit" | "takeProfit" | "stopLoss";
@@ -116,6 +119,8 @@ export function OrderTicket({
   const [expiry, setExpiry] = useState(EXPIRIES[3]!.s);
   const [bountyText, setBountyText] = useState("0.25");
   const [closeAll, setCloseAll] = useState(true);
+  /** The deposit window, opened by the button while the market holds none of the user's collateral. */
+  const [depositing, setDepositing] = useState(false);
   const [orderState, setOrderState] = useState<orders.AccountOrderState | undefined>(undefined);
   const [preview, setPreview] = useState<previewsNs.OrderPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -445,6 +450,10 @@ export function OrderTicket({
   else if (isTpSl && !hasPosition) disabled = "Take-profit and stop-loss need an open position on this market.";
   else if (attachErr) disabled = attachErr;
 
+  // No collateral on this market yet and no amount typed: the button opens the same deposit window as
+  // the account card's Deposit. Once an amount is typed, the order button deposits what it needs itself.
+  const startWithDeposit = !!w.address && !!acct && acct.position.collateral === 0n && !hasPosition && (!order || isTpSl);
+
   const sideWord = isLong ? "Buy" : "Sell";
   // The button names what the order does to the position, not just its side.
   const action = effectLabel(orderEffect(isLong, size, hasPosition && position ? position : null), isLong, base);
@@ -744,7 +753,7 @@ export function OrderTicket({
               max={Number(APP_MAX_SLIPPAGE_BP)}
               step={SLIPPAGE_STEP_BP}
               value={slippageBp === null ? 0 : Math.min(Number(slippageBp), Number(APP_MAX_SLIPPAGE_BP))}
-              onChange={(e) => setSlippageText(String(Number(e.target.value) / 100))}
+              onChange={(e) => setSlippageText((Number(e.target.value) / 100).toFixed(1))}
               aria-label="Max slippage"
             />
             <span className="slip-box">
@@ -814,12 +823,30 @@ export function OrderTicket({
         <button className="primary wide big-btn" onClick={w.openConnect}>
           Connect wallet
         </button>
+      ) : startWithDeposit ? (
+        <button className="primary wide big-btn" onClick={() => setDepositing(true)}>
+          Deposit to Get Started
+        </button>
       ) : (
         <ActionButton className={`wide big-btn ${isTpSl ? "primary" : isLong ? "buy" : "sell"}`} disabledReason={disabled} onClick={submit}>
           {isTpSl ? `Set ${title.toLowerCase()}` : deposit > 0n ? `Deposit ${usd(deposit)} & ${action[0]!.toLowerCase()}${action.slice(1)}` : action}
         </ActionButton>
       )}
-      {disabled && order && w.address && <div className="small muted">{disabled}</div>}
+      {disabled && order && w.address && !startWithDeposit && <div className="small muted">{disabled}</div>}
+      {depositing && (
+        <Modal title={`${market.label} collateral`} onClose={() => setDepositing(false)}>
+          <CollateralPanel
+            market={market}
+            snap={snap}
+            acct={acct}
+            defaultTab="deposit"
+            onDone={() => {
+              setDepositing(false);
+              onPlaced();
+            }}
+          />
+        </Modal>
+      )}
 
       <div className="kv small ticket-facts">
         <span>
@@ -874,8 +901,8 @@ export function OrderTicket({
 /** The most slippage this app lets an order allow: 5%, half the protocol's own cap (orders.MAX_SLIPPAGE_BP, 10%). */
 const APP_MAX_SLIPPAGE_BP = 500n;
 const SLIPPAGE_CAP_TEXT = "Set a slippage limit of 5% or less.";
-/** The slippage slider's step: 0.05%. The box beside it takes any value from 0.01% up to the cap. */
-const SLIPPAGE_STEP_BP = 5;
+/** The slippage slider's step: 0.1%, shown to one decimal. The box beside it takes any value from 0.01% up to the cap. */
+const SLIPPAGE_STEP_BP = 10;
 /** At or under this (0.1%), say plainly that the order may not fill. */
 const TIGHT_SLIPPAGE_BP = 10n;
 

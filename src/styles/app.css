@@ -56,7 +56,7 @@
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-/* Light: chosen in the header, or the system's choice when none is made. Light gray panels (chart,
+/* Light: chosen in the header, directly or by following the system. Light gray panels (chart,
    book, ticket, tables) on a white page; text, muted text, amber, green and red keep at least 4.5:1 on
    every gray. */
 :root[data-theme="light"] {
@@ -106,56 +106,6 @@
   --volume-up: rgba(11, 127, 82, 0.28);
   --volume-down: rgba(200, 40, 63, 0.26);
   color-scheme: light;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    --faucet: #1b1b1b;
-    --faucet-hover: #000000;
-    --on-faucet: #ffffff;
-    --bg: #ffffff;
-    --field: #ebebed;
-    --panel: #f5f5f6;
-    --panel-2: #ebebed;
-    --border: #dedee2;
-    --border-strong: #b5b5ad;
-    --row-line: #e9e9ec;
-    --hover: #efeff1;
-    --hover-2: #e6e6e9;
-    --text: #22221f;
-    --strong: #0b0b0a;
-    --muted: #66665f;
-    --accent: #f5c518;
-    --accent-hover: #ffd964;
-    --accent-text: #7a5900;
-    --accent-text-hover: #5c4300;
-    --on-accent: #0a0a0a;
-    --focus: #9a7400;
-    --up: #09724a;
-    --down: #c41f36;
-    --up-fill: #0b7f52;
-    --down-fill: #c8283f;
-    --on-up: #ffffff;
-    --on-down: #ffffff;
-    --up-bg: rgba(9, 114, 74, 0.08);
-    --down-bg: rgba(196, 31, 54, 0.08);
-    --warn-bg: rgba(245, 197, 24, 0.16);
-    --up-line: rgba(9, 114, 74, 0.4);
-    --down-line: rgba(196, 31, 54, 0.38);
-    --accent-line: rgba(176, 132, 0, 0.5);
-    --tip-bg: #ffffff;
-    --tip-border: #cfcfc8;
-    --menu-bg: #ffffff;
-    --menu-border: #d6d6cf;
-    --shadow: rgba(30, 30, 20, 0.14);
-    --overlay: rgba(20, 20, 16, 0.42);
-    --glass: rgba(255, 255, 255, 0.94);
-    --hero-a: #f5f5f6;
-    --hero-b: #fbf6e2;
-    --track: #e2e2e6;
-    --volume-up: rgba(11, 127, 82, 0.28);
-    --volume-down: rgba(200, 40, 63, 0.26);
-    color-scheme: light;
-  }
 }
 
 * { box-sizing: border-box; }
@@ -400,30 +350,52 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 main.full { max-width: none; padding: 8px 8px 16px; }
 .terminal {
   display: grid; gap: 8px; align-items: start;
-  grid-template-columns: minmax(0, 1fr) 300px 340px;
-  grid-template-areas: "bar bar bar" "note note note" "chart book side" "tabs tabs side";
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas: "main side" "tabs side";
   /* The side column (ticket, account) is taller than the chart: its extra height goes to the tabs row,
      not the chart's, so the account tabs sit right under the chart and book. */
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto 1fr;
 }
-.terminal .market-bar { grid-area: bar; }
-.t-chart { grid-area: chart; height: var(--chart-h, 560px); display: flex; flex-direction: column; }
+/* The market window: the header over the chart in one panel (t-left), the book in another down the right
+   from the top, with the grid's gap between them rather than a line. */
+.t-main {
+  grid-area: main; display: grid; gap: 8px;
+  grid-template-columns: minmax(0, 1fr) var(--book-w, 300px);
+  grid-template-areas: "left book";
+}
+.t-left { grid-area: left; display: flex; flex-direction: column; }
+/* Narrower than the page now, the header's stats sit closer, and wrap to a second line tight under the first. */
+.terminal .market-bar { gap: 6px 18px; background: transparent; border: none; border-bottom: 1px solid var(--border); border-radius: 0; }
+.t-note { margin: 8px 10px 0; }
+.t-chart { height: var(--chart-h, 560px); display: flex; flex-direction: column; min-width: 0; }
 .t-chart .chart-box { flex: 1; height: auto; min-height: 280px; }
-.t-book { grid-area: book; height: var(--chart-h, 560px); display: flex; flex-direction: column; }
+/* The book is as tall as the panel beside it (header and chart) and adds no height of its own
+   (contain: size), so a long book scrolls inside it rather than stretching the row. */
+.t-book { grid-area: book; display: flex; flex-direction: column; min-height: 0; contain: size; }
 .t-book-body { flex: 1; overflow-y: auto; }
 .t-book .tabs button { flex: 1; }
 .t-side { grid-area: side; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .t-tabs { grid-area: tabs; min-height: 280px; }
-/* The drag bar (ChartResizer): in the gap under the chart and the book, across both, adding no height of
-   its own. Its grip lights up on hover, while dragging, and on keyboard focus. */
+/* The drag bar (ChartResizer): in the gap under the market window, adding no height of its own. Its grip
+   lights up on hover, while dragging, and on keyboard focus. */
 .t-resize {
-  grid-row: 3; grid-column: 1 / 3; align-self: end; height: 8px; margin-bottom: -8px; position: relative; z-index: 3;
+  grid-area: main; align-self: end; height: 8px; margin-bottom: -8px; position: relative; z-index: 3;
   display: flex; align-items: center; justify-content: center; cursor: row-resize; touch-action: none;
 }
 .t-resize-grip { width: 44px; height: 4px; border-radius: 2px; background: var(--border-strong); transition: width 0.15s ease, background 0.15s ease; }
 .t-resize:hover .t-resize-grip, .t-resize.on .t-resize-grip, .t-resize:focus-visible .t-resize-grip { width: 88px; background: var(--accent); }
 .t-resize:focus-visible { outline: none; }
 .t-resize.on ~ * { user-select: none; }
+/* The drag bar between the chart and the book (BookResizer): in the gap between them, their full height,
+   adding no width of its own. Its grip stands upright. */
+.t-resize-x {
+  grid-area: book; justify-self: start; width: 8px; margin-left: -8px; position: relative; z-index: 3;
+  display: flex; align-items: center; justify-content: center; cursor: col-resize; touch-action: none;
+}
+.t-resize-x .t-resize-grip { width: 4px; height: 44px; transition: height 0.15s ease, background 0.15s ease; }
+.t-resize-x:hover .t-resize-grip, .t-resize-x.on .t-resize-grip, .t-resize-x:focus-visible .t-resize-grip { width: 4px; height: 88px; background: var(--accent); }
+.t-resize-x:focus-visible { outline: none; }
+.terminal:has(.t-resize-x.on) { user-select: none; }
 
 .market-bar {
   display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
@@ -523,19 +495,23 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 .dot-s.warn { background: var(--accent); }
 
 @media (max-width: 1200px) {
-  .terminal { grid-template-columns: minmax(0, 1fr) 340px; grid-template-areas: "bar bar" "note note" "chart side" "book side" "tabs tabs"; grid-template-rows: none; }
-  /* Stacked, the chart and the book keep fixed heights and the drag bar goes. */
+  .terminal { grid-template-areas: "main side" "tabs tabs"; grid-template-rows: none; }
+  /* The book stacks under the chart, each at a fixed height, and the drag bars go. */
+  .t-main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "left" "book"; }
   .t-chart { height: 560px; }
-  .t-book { height: 420px; }
-  .t-resize { display: none; }
+  .t-book { height: 420px; contain: none; }
+  .t-resize, .t-resize-x { display: none; }
 }
 @media (max-width: 860px) {
   main.full { padding: 8px 8px 90px; }
-  .terminal { grid-template-columns: minmax(0, 1fr); grid-template-areas: "bar" "note" "chart" "side" "book" "tabs"; }
+  /* Phones: the two panels join the page's own column (display: contents), so the ticket sits between the
+     chart and the book. */
+  .terminal { grid-template-columns: minmax(0, 1fr); grid-template-areas: "left" "side" "book" "tabs"; }
+  .t-main { display: contents; }
   .t-chart { height: auto; }
   .t-chart .chart-box { flex: none; height: 300px; }
   .t-book { height: 380px; }
-  .market-bar { gap: 14px; }
+  .terminal .market-bar { gap: 14px; }
   .status-bar { display: none; }
   /* Above the phone's bottom navigation, which is fixed. */
   .paused-bar { position: fixed; left: 0; right: 0; bottom: calc(42px + env(safe-area-inset-bottom)); z-index: 31; }
@@ -545,7 +521,7 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 .icon-btn { width: 36px; padding: 0; font-size: 16px; line-height: 1; }
 
 
-.chart-credit { padding: 4px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.chart-credit { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
 .chart-credit a { color: var(--muted); text-decoration: underline; }
 
 /* Phones: inputs at 16px (iOS zooms the page into anything smaller), finger-sized controls,

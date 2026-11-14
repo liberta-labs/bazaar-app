@@ -1,6 +1,6 @@
 import { BAZAAR_SCALE } from "@liberta-labs/bazaar-sdk";
 import { describe, expect, it } from "vitest";
-import { orderValue, tifText, triggerCondition } from "../src/lib/orderText";
+import { closesWholePosition, orderValue, tifText, triggerCondition } from "../src/lib/orderText";
 
 const X = BAZAAR_SCALE;
 
@@ -33,5 +33,14 @@ describe("tifText and orderValue", () => {
     expect(orderValue("Limit", 2n * X, 50n * X, 0n)).toBe(100n * X);
     expect(orderValue("StopLoss", 2n * X, 0n, 40n * X)).toBe(80n * X);
     expect(orderValue("Market", 2n * X, 0n, 40n * X)).toBeNull();
+  });
+
+  it("reads uint128's largest size as a TP/SL closing the whole position, with no value", () => {
+    const whole = (1n << 128n) - 1n;
+    expect(closesWholePosition(whole)).toBe(true);
+    expect(closesWholePosition(2n * X)).toBe(false);
+    // The size in the report: 340,282,366,920,938,463,463.37 BTC, valued at the stop-loss's $60,000.
+    expect(orderValue("StopLoss", whole, 0n, 60_000n * X)).toBeNull();
+    expect(orderValue("TakeProfit", whole, 0n, 72_000n * X)).toBeNull();
   });
 });

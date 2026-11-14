@@ -1,9 +1,9 @@
 /**
  * Open positions and open orders, across markets or on one, with every action a trader takes on
- * them: close, take-profit and stop-loss, deposit and withdraw; amend and cancel, one or many.
+ * them: close, take-profit and stop-loss, deposit and withdraw; edit and cancel, one or many.
  */
-import { account, formatUnits18, OrderType, orders, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
-import { useMemo, useState } from "react";
+import { account, type Bazaar, formatUnits18, OrderType, orders, previews, toNumber18 } from "@liberta-labs/bazaar-sdk";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 import { explain, inputSentence } from "../lib/errors";
 import { amount, leverage, parseInput, pct, price, signedUsd, toInput, usd } from "../lib/format";
@@ -31,8 +31,96 @@ export function liquidation(s: account.AccountSnapshot, spot: bigint | null): { 
   return { price: liq, distance: Math.abs(toNumber18(spot - liq) / toNumber18(spot)) };
 }
 
+/** The slider's range: 0.1% to the order ticket's 5% cap, in 0.1% steps, from 1%. */
+const CLOSE_SLIPPAGE = { min: 10, max: 500, step: 10, start: 100n };
+
+interface CloseChoice {
+  readonly slippageBp: bigint;
+  /** Fill-or-kill: close it all within the slippage, or trade nothing. */
+  readonly allOrNothing: boolean;
+}
+
+/**
+ * A close's choices until it is signed. The confirmation's controls set them and its rows follow them;
+ * the order reads them when it is signed.
+ */
+class CloseChoices {
+  private value: CloseChoice = { slippageBp: CLOSE_SLIPPAGE.start, allOrNothing: false };
+  private readonly listeners = new Set<() => void>();
+  readonly get = () => this.value;
+  readonly set = (patch: Partial<CloseChoice>) => {
+    this.value = { ...this.value, ...patch };
+    for (const l of this.listeners) l();
+  };
+  readonly subscribe = (l: () => void) => {
+    this.listeners.add(l);
+    return () => void this.listeners.delete(l);
+  };
+}
+
+const useCloseChoice = (c: CloseChoices) => useSyncExternalStore(c.subscribe, c.get);
+
+/** The max slippage on a close's confirmation, with the worst price it allows at the price now. */
+function SlippagePicker({ choices, spot, sell }: { choices: CloseChoices; spot: bigint | null; sell: boolean }) {
+  const { slippageBp: bp } = useCloseChoice(choices);
+  const move = ((spot ?? 0n) * bp) / 10_000n;
+  return (
+    <span style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+      <span className="lev-row" style={{ width: "min(220px, 100%)" }}>
+        <input
+          type="range"
+          min={CLOSE_SLIPPAGE.min}
+          max={CLOSE_SLIPPAGE.max}
+          step={CLOSE_SLIPPAGE.step}
+          value={Number(bp)}
+          onChange={(e) => choices.set({ slippageBp: BigInt(e.target.value) })}
+          aria-label="Max slippage"
+        />
+        <b style={{ minWidth: "3.5em" }}>{(Number(bp) / 100).toFixed(1)}%</b>
+      </span>
+      {spot ? <span className="small muted">{sell ? "no lower" : "no higher"} than about {price(sell ? spot - move : spot + move)}</span> : null}
+    </span>
+  );
+}
+
+function AllOrNothingBox({ choices }: { choices: CloseChoices }) {
+  const { allOrNothing } = useCloseChoice(choices);
+  return (
+    <label className="check" style={{ justifyContent: "flex-end" }}>
+      <input type="checkbox" checked={allOrNothing} onChange={(e) => choices.set({ allOrNothing: e.target.checked })} aria-label="All or nothing" />
+    </label>
+  );
+}
+
+/** What the close leaves: everything closed, or what didn't fill still open, as the box says. */
+function CloseOutcome({ choices }: { choices: CloseChoices }) {
+  const { allOrNothing } = useCloseChoice(choices);
+  return (
+    <span style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+      <span>{allOrNothing ? "none, fully closed" : "none, if it all fills"}</span>
+      <span className="small muted">
+        {allOrNothing ? "or nothing trades at all" : "what can't fill stays open"}
+      </span>
+    </span>
+  );
+}
+
+/** A market order closing the whole position, with the choices its confirmation shows when signed. */
+function closePart(readBz: Bazaar, s: account.AccountSnapshot, choices: CloseChoices) {
+  return orderPart(
+    readBz,
+    s.market.address,
+    () => {
+      const c = choices.get();
+      return { ...closeOrder(s.position.isLong, s.position.size, c.slippageBp), ...(c.allOrNothing ? { tif: orders.TimeInForce.FOK } : {}) };
+    },
+    null,
+    "Close position",
+  );
+}
+
 /** The confirmation for closing a whole position at market. */
-function closeReview(s: account.AccountSnapshot, spot: bigint | null, pnl: bigint): TxReview {
+function closeReview(s: account.AccountSnapshot, spot: bigint | null, pnl: bigint, choices: CloseChoices): TxReview {
   return {
     side: s.position.isLong ? "sell" : "buy",
     action: `${s.position.isLong ? "Sell" : "Buy"} ${amount(s.position.size)} ${baseOf(s.market.label)}`,
@@ -42,13 +130,14 @@ function closeReview(s: account.AccountSnapshot, spot: bigint | null, pnl: bigin
         title: "Order",
         rows: [
           { label: "Estimated P&L", value: <Pnl value={pnl}>{signedUsd(pnl)} before fees</Pnl> },
-          { label: "Fills within", value: "1% of the oracle price" },
+          { label: <Term t="slippage">Max slippage</Term>, value: <SlippagePicker choices={choices} spot={spot} sell={s.position.isLong} /> },
+          { label: "All or nothing", value: <AllOrNothingBox choices={choices} /> },
         ],
       },
       {
         title: "After this order",
         rows: [
-          { label: "Position", value: "none, fully closed" },
+          { label: "Position", value: <CloseOutcome choices={choices} /> },
           { label: "Collateral", value: `stays on ${s.market.label}` },
         ],
       },
@@ -75,16 +164,17 @@ function ClosePosition({ s }: { s: account.AccountSnapshot }) {
     <ActionButton
       className="small"
       disabledReason={reason}
-      onClick={() =>
-        readBz &&
+      onClick={() => {
+        if (!readBz) return;
+        const choices = new CloseChoices();
         void tx.run({
           title: `Close ${s.market.label} position`,
           summary: [],
-          review: closeReview(s, spot, pnl),
+          review: closeReview(s, spot, pnl, choices),
           pair: s.market.address,
-          parts: [orderPart(readBz, s.market.address, closeOrder(s.position.isLong, s.position.size), null, "Close position")],
-        })
-      }
+          parts: [closePart(readBz, s, choices)],
+        });
+      }}
     >
       Close
     </ActionButton>
@@ -203,16 +293,17 @@ function CloseAll({ rows }: { rows: readonly account.AccountSnapshot[] }) {
       onClick={() => {
         if (!readBz) return;
         for (const s of open) {
+          const choices = new CloseChoices();
           void tx.run({
             title: `Close ${s.market.label} position`,
             summary: held.length ? [`Not closed now (market orders paused): ${held.map((x) => x.market.label).join(", ")}.`] : [],
             review: (() => {
               const live = prices?.price(s.market.address) ?? null;
               const pnl = (live ? account.accountHealth(s, live) : s.health)?.totalPnl ?? 0n;
-              return closeReview(s, live?.spot ?? s.price?.spot ?? null, pnl);
+              return closeReview(s, live?.spot ?? s.price?.spot ?? null, pnl, choices);
             })(),
             pair: s.market.address,
-            parts: [orderPart(readBz, s.market.address, closeOrder(s.position.isLong, s.position.size), null, "Close position")],
+            parts: [closePart(readBz, s, choices)],
           });
         }
       }}
@@ -403,27 +494,70 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
   );
 }
 
-function AmendDialog({ s, o, onClose }: { s: account.AccountSnapshot; o: account.AccountOrder; onClose: () => void }) {
+const E18 = 10n ** 18n;
+const CENT = 10n ** 16n;
+const SIZE_STEP = 10n ** 10n; // a size typed or shown in the base asset: 8 decimal places
+
+/** Dollars at a price, rounded down to the cent. */
+const dollarsAt = (size: bigint, at: bigint) => ((size * at) / E18 / CENT) * CENT;
+
+function EditOrderDialog({ s, o, onClose }: { s: account.AccountSnapshot; o: account.AccountOrder; onClose: () => void }) {
   const tx = useTx();
+  const base = baseOf(s.market.label);
   const [priceText, setPriceText] = useState(toInput(o.limitPrice, 8));
+  const [unit, setUnit] = useState<"base" | "usd">("base");
   const [sizeText, setSizeText] = useState(toInput(o.remaining, 8));
+  // The order's own size, to the last unit, until the size is typed over: left alone, the size stays
+  // exactly what it was, in either unit and at any new price, so the order keeps its place in line.
+  const [exact, setExact] = useState<bigint | null>(o.remaining);
   const p = parseInput(priceText);
-  const remaining = parseInput(sizeText);
-  const err = p === null || p <= 0n ? "Enter a price." : remaining === null || remaining <= 0n ? "Enter a size." : null;
+  const at = p !== null && p > 0n ? p : null;
+  const typed = parseInput(sizeText);
+  // Dollars convert at the order's limit price: what the order is worth when it fills.
+  const remaining = exact ?? (typed === null || typed <= 0n ? null : unit === "base" ? typed : at ? (typed * E18) / at : null);
+  const shown = exact === null ? sizeText : unit === "base" ? toInput(exact, 8) : at ? toInput(dollarsAt(exact, at), 2) : "";
+  const err = at === null ? "Enter a price." : remaining === null || remaining <= 0n ? "Enter a size." : null;
+  const switchUnit = () => {
+    const next = unit === "base" ? "usd" : "base";
+    // The size typed in one unit carries to the other, rounded down so it never grows.
+    if (exact === null && remaining !== null && at) setSizeText(next === "usd" ? toInput(dollarsAt(remaining, at), 2) : toInput((remaining / SIZE_STEP) * SIZE_STEP, 8));
+    setUnit(next);
+  };
   return (
-    <Modal title={`Amend order #${o.orderId}`} onClose={onClose}>
+    <Modal title={`Edit order #${o.orderId}`} onClose={onClose}>
       <p className="small muted">
-        {o.isLong ? "Buy" : "Sell"} {baseOf(s.market.label)}. A new price or a larger size moves it to the back of its price level.
+        {o.isLong ? "Buy" : "Sell"} {base}. A new price or a larger size moves it to the back of its price level.
       </p>
       <div className="stack">
         <label className="field">
           Limit price
-          <input className="num" inputMode="decimal" value={priceText} onChange={(e) => setPriceText(e.target.value)} />
+          <div className="input-row">
+            <input className="num" inputMode="decimal" value={priceText} onChange={(e) => setPriceText(e.target.value)} />
+            <span className="muted small">USD</span>
+          </div>
         </label>
         <label className="field">
-          Size still to fill ({baseOf(s.market.label)})
-          <input className="num" inputMode="decimal" value={sizeText} onChange={(e) => setSizeText(e.target.value)} />
+          Size still to fill
+          <div className="input-row">
+            <input
+              className="num"
+              inputMode="decimal"
+              value={shown}
+              onChange={(e) => {
+                setExact(null);
+                setSizeText(e.target.value);
+              }}
+            />
+            <button type="button" className="chip" onClick={switchUnit} title={`Enter in ${unit === "base" ? "USD" : base}`}>
+              {unit === "base" ? base : "USD"} ⇄
+            </button>
+          </div>
         </label>
+        {remaining !== null && remaining > 0n && at && (
+          <span className="small muted" style={{ marginTop: -6 }}>
+            {unit === "base" ? `≈ ${usd(dollarsAt(remaining, at))} at your limit price` : `≈ ${amount(remaining, 8)} ${base}`}
+          </span>
+        )}
         {err && <div className="field-error">{err}</div>}
         <button
           className="primary"
@@ -431,15 +565,15 @@ function AmendDialog({ s, o, onClose }: { s: account.AccountSnapshot; o: account
           onClick={() => {
             onClose();
             void tx.run({
-              title: "Amend order",
-              summary: [`Order #${o.orderId}: ${o.isLong ? "buy" : "sell"} ${amount(remaining!)} ${baseOf(s.market.label)} at ${price(p!)}.`],
+              title: "Edit order",
+              summary: [`Order #${o.orderId}: ${o.isLong ? "buy" : "sell"} ${amount(remaining!)} ${base} at ${price(at!)}.`],
               pair: s.market.address,
               // The pair takes the new total size, the filled part included.
-              parts: [amendPart(s.market.address, [{ orderId: o.orderId, limitPrice: p!, size: o.filled + remaining! }])],
+              parts: [amendPart(s.market.address, [{ orderId: o.orderId, limitPrice: at!, size: o.filled + remaining! }])],
             });
           }}
         >
-          Amend
+          Save changes
         </button>
       </div>
     </Modal>
@@ -452,7 +586,7 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
   const tx = useTx();
   const w = useWallet();
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const [amend, setAmend] = useState<null | { s: account.AccountSnapshot; o: account.AccountOrder }>(null);
+  const [editing, setEditing] = useState<null | { s: account.AccountSnapshot; o: account.AccountOrder }>(null);
   const rows = useMemo(() => snaps.flatMap((s) => s.orders.map((o) => ({ s, o, key: `${s.market.address}-${o.orderId}` }))), [snaps]);
   const { sorted, th } = useSort(rows, {
     market: (r) => r.s.market.label,
@@ -592,8 +726,8 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
                 <td data-actions="">
                   <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
                     {o.orderType === OrderType.Limit && o.tif === 0 && (
-                      <ActionButton className="small" disabledReason={!w.canSign ? CONTRACT_WALLET_REASON : tx.busy(s.market.address) ? "Your last request on this market is still landing." : null} onClick={() => setAmend({ s, o })}>
-                        Amend
+                      <ActionButton className="small" disabledReason={!w.canSign ? CONTRACT_WALLET_REASON : tx.busy(s.market.address) ? "Your last request on this market is still landing." : null} onClick={() => setEditing({ s, o })}>
+                        Edit
                       </ActionButton>
                     )}
                     <ActionButton className="small" disabledReason={tx.busy(s.market.address) ? "Your last request on this market is still landing." : null} onClick={() => cancel([{ s, o, key }])}>
@@ -609,7 +743,7 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
       <p className="small muted" style={{ padding: "0 10px" }}>
         Up to {orders.MAX_ACTIVE_LIMIT_ORDERS_PER_USER} resting limit and stop-limit orders per market, plus one take-profit and one stop-loss.
       </p>
-      {amend && <AmendDialog s={amend.s} o={amend.o} onClose={() => setAmend(null)} />}
+      {editing && <EditOrderDialog s={editing.s} o={editing.o} onClose={() => setEditing(null)} />}
     </>
   );
 }

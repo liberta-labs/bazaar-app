@@ -16,6 +16,7 @@ import {
   createChart,
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
+import type { ChartMark } from "../lib/chartMarks";
 import { useCssVars, useTheme } from "../state/theme";
 
 export interface ChartCandle {
@@ -35,14 +36,19 @@ function faint(color: string): string {
 }
 
 /** The theme's colors, read from its CSS variables: the chart draws on a canvas, which can't use them directly. */
-const VARS = ["panel", "row-line", "muted", "border", "up-fill", "down-fill", "accent", "focus", "volume-up", "volume-down"] as const;
+const VARS = ["panel", "row-line", "muted", "border", "up-fill", "down-fill", "up", "down", "strong", "accent", "focus", "volume-up", "volume-down"] as const;
 
-export function PriceChart({ candles, oracle, precision }: { candles: readonly ChartCandle[]; oracle: bigint | null; precision: number }) {
+/** The liquidation line's orange: apart from the green and red of orders and the oracle's yellow, on either theme. */
+const LIQ_COLOR = "#f0883e";
+const MARK_STYLE: Record<ChartMark["style"], LineStyle> = { solid: LineStyle.Solid, dashed: LineStyle.Dashed, dotted: LineStyle.Dotted };
+
+export function PriceChart({ candles, oracle, precision, marks = [] }: { candles: readonly ChartCandle[]; oracle: bigint | null; precision: number; marks?: readonly ChartMark[] }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volume = useRef<ISeriesApi<"Histogram"> | null>(null);
   const line = useRef<IPriceLine | null>(null);
+  const markLines = useRef(new Map<string, IPriceLine>());
   const c = useCssVars(VARS);
   const { theme } = useTheme();
   // On white the brand yellow is too faint for a thin line: the oracle line takes the darker amber.
@@ -50,6 +56,7 @@ export function PriceChart({ candles, oracle, precision }: { candles: readonly C
 
   useEffect(() => {
     if (!box.current) return;
+    const lines = markLines.current;
     const ch = createChart(box.current, {
       autoSize: true,
       layout: { attributionLogo: true, fontFamily: "Inter, system-ui, sans-serif" },
@@ -73,6 +80,7 @@ export function PriceChart({ candles, oracle, precision }: { candles: readonly C
       series.current = null;
       volume.current = null;
       line.current = null;
+      lines.clear();
     };
   }, []);
 
@@ -125,6 +133,39 @@ export function PriceChart({ candles, oracle, precision }: { candles: readonly C
       line.current = s.createPriceLine({ price: toNumber18(oracle), color: oracleColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "Oracle" });
     }
   }, [oracle, oracleColor]);
+
+  // Your orders and position: each line kept by its key and moved in place, so a fill or an edit
+  // doesn't make the others flicker. The price scale fits the candles, not these: a far-off order or
+  // liquidation price doesn't squash the chart, and shows once you scroll to it.
+  useEffect(() => {
+    const s = series.current;
+    if (!s) return;
+    const color = { up: c.up, down: c.down, neutral: c.strong, warn: LIQ_COLOR };
+    const lines = markLines.current;
+    const seen = new Set<string>();
+    for (const m of marks) {
+      seen.add(m.key);
+      // The line at half strength, so a few of them don't compete with the candles; its tag on the
+      // price axis in full color, so it stays readable.
+      const opts = {
+        price: toNumber18(m.price),
+        color: faint(color[m.tone]),
+        axisLabelColor: color[m.tone],
+        lineWidth: 1 as const,
+        lineStyle: MARK_STYLE[m.style],
+        axisLabelVisible: true,
+        title: m.title,
+      };
+      const cur = lines.get(m.key);
+      if (cur) cur.applyOptions(opts);
+      else lines.set(m.key, s.createPriceLine(opts));
+    }
+    for (const [key, l] of lines) {
+      if (seen.has(key)) continue;
+      s.removePriceLine(l);
+      lines.delete(key);
+    }
+  }, [marks, c]);
 
   return <div ref={box} style={{ position: "absolute", inset: 0 }} />;
 }

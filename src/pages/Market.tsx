@@ -1,8 +1,9 @@
 import { history, type markets } from "@liberta-labs/bazaar-sdk";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ChartResizer, useChartHeight } from "../components/ChartResizer";
+import { BookResizer, ChartResizer, useBookWidth, useChartHeight } from "../components/ChartResizer";
 import { AccountCard } from "../components/AccountCard";
+import { liquidation } from "../components/AccountTables";
 import { AccountTabs } from "../components/AccountTabs";
 import { MarketBar } from "../components/MarketBar";
 import { type LiveFill, RecentTrades } from "../components/RecentTrades";
@@ -11,6 +12,7 @@ import { OrderBook } from "../components/OrderBook";
 import { OrderTicket, type TicketPrefill } from "../components/OrderTicket";
 import { type ChartCandle, PriceChart } from "../components/PriceChart";
 import { Empty, Loading, Term, Tip } from "../components/ui";
+import { type ChartMark, chartMarks } from "../lib/chartMarks";
 import { GLOSSARY } from "../lib/glossary";
 import { price } from "../lib/format";
 import { useBoard, useMarketInfo, useRead } from "../state/connection";
@@ -20,6 +22,9 @@ import { usePoll } from "../state/poll";
 
 const INTERVAL_LABEL: Record<number, string> = { 60: "1m", 300: "5m", 900: "15m", 3600: "1h", 14400: "4h", 86400: "1d" };
 const CANDLES_SHOWN = 300;
+/** Whether the chart shows your orders and position ("0" hides them), kept per browser. */
+const SHOW_MINE_KEY = "bazaar.chartMine";
+const NO_MARKS: readonly ChartMark[] = [];
 
 function precisionOf(p: bigint | null): number {
   if (!p) return 2;
@@ -102,11 +107,27 @@ export function MarketPage() {
   const [interval, setInterval_] = useState(900);
   const [prefill, setPrefill] = useState<TicketPrefill | null>(null);
   const [bookTab, setBookTab] = useState<"book" | "trades">("book");
+  const [showMine, setShowMine] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_MINE_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleMine = () => {
+    setShowMine(!showMine);
+    try {
+      localStorage.setItem(SHOW_MINE_KEY, showMine ? "0" : "1");
+    } catch {
+      /* storage blocked: the choice lasts until the page reloads */
+    }
+  };
   const [fills, setFills] = useState<LiveFill[]>([]);
   const { candles, trades, loading: candlesLoading, onTrade } = useCandles(info?.address, interval);
-  // How tall the chart and the book stand, set with the bar under them.
+  // How tall the chart and the book stand, and how wide the book is: set with the bars under them and between them.
   const terminalRef = useRef<HTMLDivElement>(null);
   const [chartHeight, setChartHeight] = useChartHeight();
+  const [bookWidth, setBookWidth] = useBookWidth();
 
   const inUse = usePageActive();
   // Another market: nothing shown belongs to it.
@@ -143,6 +164,7 @@ export function MarketPage() {
 
   const live = info ? prices?.price(info.address) : null;
   const mine = info ? acct.snaps.get(info.address) : undefined;
+  const marks = useMemo(() => chartMarks(mine, mine ? liquidation(mine, null).price : null), [mine]);
   const spot = useMemo(
     () => live ?? (snap && snap.price.updateTs > 0 && snap.price.spot > 0n ? { spot: snap.price.spot, low: snap.price.low, high: snap.price.high, publishTime: snap.price.updateTs } : null),
     [live, snap],
@@ -157,69 +179,84 @@ export function MarketPage() {
   const quiet = !candlesLoading && trades === 0;
 
   return (
-    <div className="terminal" ref={terminalRef} style={{ "--chart-h": `${chartHeight}px` } as CSSProperties}>
-      <MarketBar info={info} snap={snap} spot={spot} stored={stored} />
+    <div className="terminal" ref={terminalRef} style={{ "--chart-h": `${chartHeight}px`, "--book-w": `${bookWidth}px` } as CSSProperties}>
+      {/* The market window: its header over the chart in one panel, the book in another beside it from the top,
+          a gap between them. On phones the two stack, with the ticket between them (app.css). */}
+      <div className="t-main">
+        <section className="panel tight t-left">
+          <MarketBar info={info} snap={snap} spot={spot} stored={stored} />
 
-      {snap && snap.status !== "live" && (
-        <div className="banner warn" style={{ gridArea: "note", margin: 0 }}>
-          <div className="grow">
-            <b>
-              <Term t={snap.status as "adl"}>{snap.status.toUpperCase()}</Term>:
-            </b>{" "}
-            {GLOSSARY[snap.status as "adl"]} {snap.reasons.marketOrdersDisabled ?? ""}
-          </div>
-        </div>
-      )}
-
-      <section className="panel tight t-chart">
-        <div className="chart-toolbar">
-          {history.CANDLE_INTERVALS.map((iv) => (
-            <button key={iv} className={iv === interval ? "on" : ""} onClick={() => setInterval_(iv)}>
-              {INTERVAL_LABEL[iv]}
-            </button>
-          ))}
-          <span className="grow" />
-          <Tip text="Candles are built from this market's fills. The dashed yellow line is the oracle price from Pyth.">
-            <span className="small muted term">about this chart</span>
-          </Tip>
-        </div>
-        <div className="chart-box">
-          <PriceChart candles={candles} oracle={live?.spot ?? null} precision={precisionOf(spot?.spot ?? null)} />
-          {quiet && (
-            <div className="chart-empty">
-              <div>
-                <div>{candles.length ? "No trades in this period yet." : "No trades on this market yet."}</div>
-                <div className="small">Candles are built from fills, so a quiet market has few. The oracle price is {spot ? price(spot.spot) : "–"}.</div>
+          {snap && snap.status !== "live" && (
+            <div className="banner warn t-note">
+              <div className="grow">
+                <b>
+                  <Term t={snap.status as "adl"}>{snap.status.toUpperCase()}</Term>:
+                </b>{" "}
+                {GLOSSARY[snap.status as "adl"]} {snap.reasons.marketOrdersDisabled ?? ""}
               </div>
             </div>
           )}
-        </div>
-        {/* The chart library's licence (Apache 2.0) asks for credit and a link to TradingView on the page; the full NOTICE text rides in the title. */}
-        <div className="chart-credit" title="TradingView Lightweight Charts™ · Copyright © 2025 TradingView, Inc.">
-          Powered by{" "}
-          <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
-            TradingView
-          </a>
-        </div>
-      </section>
 
-      <section className="panel tight t-book">
-        <div className="tabs" role="tablist">
-          <button className={bookTab === "book" ? "on" : ""} onClick={() => setBookTab("book")} role="tab" aria-selected={bookTab === "book"}>
-            Order book
-          </button>
-          <button className={bookTab === "trades" ? "on" : ""} onClick={() => setBookTab("trades")} role="tab" aria-selected={bookTab === "trades"}>
-            Trades
-          </button>
-        </div>
-        <div className="t-book-body">
-          {bookTab === "book" ? (
-            <OrderBook pair={info.address} version={bookVersion} mark={snap?.markPrice ?? null} onPick={(p) => setPrefill((x) => ({ price: p, n: (x?.n ?? 0) + 1 }))} />
-          ) : (
-            <RecentTrades pair={info.address} live={fills} base={info.label.split("/")[0] ?? "asset"} />
-          )}
-        </div>
-      </section>
+          <div className="t-chart">
+            <div className="chart-toolbar">
+              {history.CANDLE_INTERVALS.map((iv) => (
+                <button key={iv} className={iv === interval ? "on" : ""} onClick={() => setInterval_(iv)}>
+                  {INTERVAL_LABEL[iv]}
+                </button>
+              ))}
+              <span className="grow" />
+              {marks.length > 0 && (
+                // Yellow while it's on, that is while your lines are hidden.
+                <button className={showMine ? "" : "on"} onClick={toggleMine} aria-pressed={!showMine} title={showMine ? "Hide your orders and position on the chart" : "Your orders and position are hidden. Click to show them."}>
+                  Hide my orders
+                </button>
+              )}
+            </div>
+            <div className="chart-box">
+              <PriceChart candles={candles} oracle={live?.spot ?? null} precision={precisionOf(spot?.spot ?? null)} marks={showMine ? marks : NO_MARKS} />
+              {quiet && (
+                <div className="chart-empty">
+                  <div>
+                    <div>{candles.length ? "No trades in this period yet." : "No trades on this market yet."}</div>
+                    <div className="small">Candles are built from fills, so a quiet market has few. The oracle price is {spot ? price(spot.spot) : "–"}.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* The chart library's licence (Apache 2.0) asks for credit and a link to TradingView on the page; the full NOTICE text rides in the title. */}
+            <div className="chart-credit">
+              <span title="TradingView Lightweight Charts™ · Copyright © 2025 TradingView, Inc.">
+                Powered by{" "}
+                <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+                  TradingView
+                </a>
+              </span>
+              <Tip text="Candles are built from this market's fills. The dashed yellow line is the oracle price from Pyth. Your open orders show as green (buy) and red (sell) lines, dotted while they wait on a trigger, with your position's entry as a solid line and its liquidation price in orange. Hide my orders takes them off the chart.">
+                <span className="term">about this chart</span>
+              </Tip>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel tight t-book">
+          <div className="tabs" role="tablist">
+            <button className={bookTab === "book" ? "on" : ""} onClick={() => setBookTab("book")} role="tab" aria-selected={bookTab === "book"}>
+              Order book
+            </button>
+            <button className={bookTab === "trades" ? "on" : ""} onClick={() => setBookTab("trades")} role="tab" aria-selected={bookTab === "trades"}>
+              Trades
+            </button>
+          </div>
+          <div className="t-book-body">
+            {bookTab === "book" ? (
+              <OrderBook pair={info.address} version={bookVersion} mark={snap?.markPrice ?? null} onPick={(p) => setPrefill((x) => ({ price: p, n: (x?.n ?? 0) + 1 }))} />
+            ) : (
+              <RecentTrades pair={info.address} live={fills} base={info.label.split("/")[0] ?? "asset"} />
+            )}
+          </div>
+        </section>
+        <BookResizer target={terminalRef} width={bookWidth} onChange={setBookWidth} />
+      </div>
 
       <ChartResizer target={terminalRef} height={chartHeight} onChange={setChartHeight} />
 

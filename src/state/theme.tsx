@@ -1,8 +1,8 @@
 /**
- * Light and dark mode. The user picks System, Light or Dark in the header; System follows the
- * device and changes with it. The choice is kept per browser. index.html applies it before the first
- * paint, so the page never flashes the other theme; this provider keeps it current and tells the
- * wallet window (AppKit) and the chart, which can't read CSS variables by themselves.
+ * Light and dark mode. Dark until the user picks otherwise: Dark, Light or System in the header, where
+ * System follows the device and changes with it. The choice is kept per browser. index.html applies it
+ * before the first paint, so the page never flashes the other theme; this provider keeps it current and
+ * tells the wallet window (AppKit) and the chart, which can't read CSS variables by themselves.
  */
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { appKit } from "./appkit";
@@ -15,20 +15,28 @@ export const THEME_KEY = "bazaar.theme";
 
 const media = () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null);
 
+/** With no choice saved (or storage blocked), the app is dark. */
+export const DEFAULT_PREF: ThemePref = "dark";
+
 function readPref(): ThemePref {
   try {
     const v = localStorage.getItem(THEME_KEY);
-    return v === "light" || v === "dark" ? v : "system";
+    return v === "light" || v === "dark" || v === "system" ? v : DEFAULT_PREF;
   } catch {
-    return "system";
+    return DEFAULT_PREF;
   }
+}
+
+/** The header button's order: Dark, then Light, then System, then Dark again. */
+export function nextPref(p: ThemePref): ThemePref {
+  return p === "dark" ? "light" : p === "light" ? "system" : "dark";
 }
 
 interface ThemeState {
   readonly pref: ThemePref;
   readonly theme: Theme;
   readonly setPref: (p: ThemePref) => void;
-  /** System, then Light, then Dark. */
+  /** Moves to the next choice: Dark, then Light, then System. */
   readonly cycle: () => void;
 }
 
@@ -64,14 +72,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const setPref = useCallback((p: ThemePref) => {
     setPrefState(p);
     try {
-      if (p === "system") localStorage.removeItem(THEME_KEY);
-      else localStorage.setItem(THEME_KEY, p);
+      // Saved even for System: nothing saved means the dark default.
+      localStorage.setItem(THEME_KEY, p);
     } catch {
       /* storage blocked: the choice lasts until the page reloads */
     }
   }, []);
 
-  const cycle = useCallback(() => setPref(pref === "system" ? "light" : pref === "light" ? "dark" : "system"), [pref, setPref]);
+  const cycle = useCallback(() => setPref(nextPref(pref)), [pref, setPref]);
   const value = useMemo(() => ({ pref, theme, setPref, cycle }), [pref, theme, setPref, cycle]);
   return <ThemeCtx.Provider value={value}>{children}</ThemeCtx.Provider>;
 }
