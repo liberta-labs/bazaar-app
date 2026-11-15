@@ -8,6 +8,7 @@ import { account, fromUsdcUnits, type history } from "@liberta-labs/bazaar-sdk";
 import { useMemo, useState } from "react";
 import type { Address } from "viem";
 import { signedUsd, usd } from "../lib/format";
+import { ytdDays } from "../lib/periods";
 import { useBoard, useRead } from "../state/connection";
 import { useLiveAccount } from "../state/data";
 import { useInsuranceStakes } from "../state/insurance";
@@ -15,14 +16,19 @@ import { PnlChart } from "./PnlChart";
 import { Loading, Pnl, Term, Tip, useAsync } from "./ui";
 
 const DAY = 86_400;
-type Period = 1 | 7 | 30 | 90 | 0;
-const PERIODS: { days: Period; label: string }[] = [
-  { days: 1, label: "Today" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
-  { days: 0, label: "All time" },
-];
+const PERIODS = [
+  { key: "1", label: "Today" },
+  { key: "7", label: "7 days" },
+  { key: "30", label: "30 days" },
+  { key: "90", label: "90 days" },
+  { key: "ytd", label: "Year to date" },
+  { key: "365", label: "1 year" },
+  { key: "all", label: "All time" },
+] as const;
+type Period = (typeof PERIODS)[number]["key"];
+
+/** The UTC days a period covers, today included; null for all time. */
+const daysOf = (p: Period): number | null => (p === "all" ? null : p === "ytd" ? ytdDays() : Number(p));
 
 interface Sums {
   readonly volume: bigint;
@@ -53,7 +59,7 @@ export function PortfolioSummary({ user }: { user: Address }) {
   const { prices } = useBoard();
   const acct = useLiveAccount();
   const stakes = useInsuranceStakes(user);
-  const [period, setPeriod] = useState<Period>(30);
+  const [period, setPeriod] = useState<Period>("30");
   const [chart, setChart] = useState<"pnl" | "volume">("pnl");
   const history = useAsync(async () => (readBz ? (await readBz.history.accountDayData(user, { from: 0, first: 1000 })).items : []), [readBz, user]);
 
@@ -63,7 +69,8 @@ export function PortfolioSummary({ user }: { user: Address }) {
   const since = (n: number) => all.filter((d) => d.date > today - n * DAY);
   const fortnight = sum(since(14));
   const lifetime = sum(all);
-  const inPeriod = period === 0 ? lifetime : sum(since(period));
+  const span = daysOf(period);
+  const inPeriod = span === null ? lifetime : sum(since(span));
 
   // What the account holds now.
   const held = useMemo(() => {
@@ -89,7 +96,7 @@ export function PortfolioSummary({ user }: { user: Address }) {
   const total = markets + insured + held.claimable + held.wallet;
 
   const first = all[0]?.date ?? today;
-  const chartFrom = period === 0 ? first : today - ((period === 1 ? 14 : period) - 1) * DAY;
+  const chartFrom = span === null ? first : today - ((span === 1 ? 14 : span) - 1) * DAY;
   const bars = fillDays(all, chartFrom, today, chart === "pnl" ? (d) => d.realizedPnl - d.feesPaid : (d) => d.makerVolumeNotional + d.takerVolumeNotional);
   const loading = history.loading && !history.data;
 
@@ -111,9 +118,9 @@ export function PortfolioSummary({ user }: { user: Address }) {
       <section className="panel">
         <div className="spread">
           <h3 style={{ margin: 0 }}>Account</h3>
-          <select className="compact" value={period} onChange={(e) => setPeriod(Number(e.target.value) as Period)} aria-label="Period">
+          <select className="compact" value={period} onChange={(e) => setPeriod(e.target.value as Period)} aria-label="Period">
             {PERIODS.map((p) => (
-              <option key={p.days} value={p.days}>
+              <option key={p.key} value={p.key}>
                 {p.label}
               </option>
             ))}
@@ -175,7 +182,7 @@ export function PortfolioSummary({ user }: { user: Address }) {
               Volume
             </button>
           </div>
-          <span className="small muted">{period === 1 ? "last 14 days" : PERIODS.find((p) => p.days === period)?.label.toLowerCase()}, by UTC day</span>
+          <span className="small muted">{period === "1" ? "last 14 days" : PERIODS.find((p) => p.key === period)?.label.toLowerCase()}, by UTC day</span>
         </div>
         {loading ? <Loading /> : !all.length ? <p className="small muted">Your daily P&L and volume show here once you trade.</p> : <PnlChart days={bars} kind={chart} />}
       </section>

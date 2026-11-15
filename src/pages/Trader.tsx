@@ -15,6 +15,7 @@ import { ACTIVE, addressUrl } from "../config/networks";
 import { explain } from "../lib/errors";
 import { dateTime, leverage, pct, price, shortAddr, signedUsd, sizeText, usd } from "../lib/format";
 import { BADGES, entryOf, fetchLeaderboard, levelOf, medalOf } from "../lib/leaderboard";
+import { ytdDays } from "../lib/periods";
 import { describeChange, pnlOver } from "../lib/trader";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import "../styles/trader.css";
@@ -27,6 +28,8 @@ const PERIODS = [
   { key: "1D", days: 1, label: "Today (UTC)" },
   { key: "1W", days: 7, label: "Past week" },
   { key: "1M", days: 30, label: "Past month" },
+  { key: "1Y", days: 365, label: "Past year" },
+  { key: "YTD", days: "ytd", label: "Year to date" },
   { key: "ALL", days: null, label: "All time" },
 ] as const;
 type Period = (typeof PERIODS)[number]["key"];
@@ -321,7 +324,7 @@ function Activity({ account, isMe }: { account: Address; isMe: boolean }) {
 function PnlCard({ days, unrealized, hasPrices }: { days: readonly history.AccountDayData[]; unrealized: bigint; hasPrices: boolean }) {
   const [period, setPeriod] = useState<Period>("1W");
   const p = PERIODS.find((x) => x.key === period)!;
-  const { total, points } = pnlOver(days, p.days);
+  const { total, points } = pnlOver(days, p.days === "ytd" ? ytdDays() : p.days);
   const tone = total > 0n ? "up" : total < 0n ? "down" : "";
   return (
     <section className="panel trader-pnl">
