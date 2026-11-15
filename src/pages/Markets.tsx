@@ -4,8 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { FaucetButton } from "../components/Faucet";
 import { AssetIcon } from "../components/AssetIcon";
 import { NetworkHelpLink } from "../components/NetworkHelp";
-import { MarketFilterChips, matchesSearch, useMarketFilter } from "../components/MarketFilters";
-import { StarButton, StarIcon } from "../components/StarButton";
+import { MarketFilterChips, NoMarketMatch, matchesSearch, useMarketFilter } from "../components/MarketFilters";
+import { StarButton } from "../components/StarButton";
 import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { Empty, Loading, PriceAge, StatusBadge, Term, Tip } from "../components/ui";
 import { ACTIVE } from "../config/networks";
@@ -14,8 +14,10 @@ import { GLOSSARY } from "../lib/glossary";
 import { fundingHoursPerYear, hoursLabel, tradingHours } from "../lib/hours";
 import { pct, price, rate18, signedPct, usd } from "../lib/format";
 import { openInterestNotional } from "../lib/openInterest";
+import { HAS_PROJECT_ID } from "../state/appkit";
 import { useBoard, useRead, useWallet } from "../state/connection";
 import { useDayStats, useLiveAccount, useMarketSnapshots } from "../state/data";
+import type { SortState } from "../lib/sort";
 import { useSort } from "../state/sort";
 
 function GettingStarted() {
@@ -37,8 +39,12 @@ function GettingStarted() {
   const steps = [
     {
       done: onNetwork,
-      title: "Connect a wallet",
-      text: `MetaMask, Rabby or any browser wallet, or a phone wallet by QR code. It needs to be on the ${ACTIVE.name} network.`,
+      // "Connect", never "Sign in": there's no account to sign up for. Email and social logins need the
+      // Reown project id; without it, only a wallet of your own connects.
+      title: "Connect",
+      text: HAS_PROJECT_ID
+        ? "Use your email or a Google, X or Apple account, or a wallet like MetaMask or Rabby."
+        : `MetaMask, Rabby or any browser wallet. It needs to be on the ${ACTIVE.name} network.`,
       action: !w.address ? (
         <button className="primary small" onClick={w.openConnect}>
           Connect
@@ -51,13 +57,14 @@ function GettingStarted() {
         )
       ),
       // Shown once done too, so a guide open when the switch lands stays open to say so.
-      help: <NetworkHelpLink />,
+      // An email or social login starts on the right network; only a wallet of your own needs adding it.
+      help: <NetworkHelpLink label={HAS_PROJECT_ID ? `Using your own wallet? Add ${ACTIVE.name}` : undefined} />,
     },
     ...(ACTIVE.testnet
       ? [{ done: (usdc ?? 0n) > 0n || deposited, title: "Get test USDC", text: "Free test dollars to try Bazaar with. They have no real value.", action: w.address && <FaucetButton compact />, help: <TestUsdcHelpLink /> }]
       : []),
     { done: deposited, title: "Deposit on a market", text: "Collateral is held per market: open a market and deposit there.", action: first && <button className="small" onClick={() => navigate(`/market/${first.address}`)}>Open {first.label}</button> },
-    { done: traded, title: "Buy or sell", text: "Pick an amount and leverage. You'll see the fee and liquidation price before you sign. No ETH needed." },
+    { done: traded, title: "Buy or Sell", text: "Pick an amount and leverage. You'll see the fee and liquidation price before you sign. No ETH needed." },
   ];
   return (
     <section className="hero">
@@ -105,6 +112,9 @@ function HoursBadge({ m }: { m: mk.MarketInfo }) {
   );
 }
 
+/** The markets table's opening sort: the most traded first. */
+const MARKETS_SORT: SortState = { key: "volume", dir: "desc" };
+
 export function MarketsPage() {
   const { markets: list, readBz } = useRead();
   const { snaps, loading } = useMarketSnapshots();
@@ -113,13 +123,9 @@ export function MarketsPage() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const show = useMarketFilter(list, "bazaar.marketsFilter");
-  const { filter, pick } = show;
 
   const needle = q.trim().toLowerCase();
   const rows = list.filter((m) => show.inFilter(m) && matchesSearch(m, needle));
-  // Matches the search finds outside the picked filter, offered when it finds none inside it.
-  const elsewhere = filter !== "all" && needle ? list.filter((m) => matchesSearch(m, needle)).length : 0;
-  const filterLabel = show.label;
   // Each market with what its columns show, worked out once for both the cells and the sort.
   const view = rows.map((m) => {
     const s = snaps.get(m.address);
@@ -131,15 +137,21 @@ export function MarketsPage() {
     const oi = s ? openInterestNotional(s) : null;
     return { m, s, live, stored, spot, d, change, oi };
   });
-  const { sorted, th } = useSort(view, {
-    market: (v) => v.m.label,
-    price: (v) => v.spot,
-    change: (v) => v.change,
-    volume: (v) => v.d?.volume,
-    oi: (v) => v.oi,
-    funding: (v) => v.s?.funding.currentRatePerHour,
-    status: (v) => v.s?.status,
-  });
+  // Opens sorted by 24-hour volume, highest first. Until the day's volumes arrive, and among markets
+  // with the same volume, rows keep the factory's order.
+  const { sorted, th } = useSort(
+    view,
+    {
+      market: (v) => v.m.label,
+      price: (v) => v.spot,
+      change: (v) => v.change,
+      volume: (v) => v.d?.volume,
+      oi: (v) => v.oi,
+      funding: (v) => v.s?.funding.currentRatePerHour,
+      status: (v) => v.s?.status,
+    },
+    MARKETS_SORT,
+  );
 
   return (
     <>
@@ -155,23 +167,8 @@ export function MarketsPage() {
         ) : rows.length === 0 ? (
           !list.length ? (
             <Empty title="No markets yet">Markets appear here once listed. See Proposals to propose one.</Empty>
-          ) : needle ? (
-            <Empty
-              title={filter === "all" ? "No market matches your search" : filter === "watchlist" ? "No market on your watchlist matches your search" : `No match in ${filterLabel}`}
-              action={
-                elsewhere > 0 && (
-                  <button className="small" onClick={() => pick("all")}>
-                    Search all markets ({elsewhere})
-                  </button>
-                )
-              }
-            >
-              {elsewhere > 0 ? "" : "Try another name, like BTC or ETH."}
-            </Empty>
           ) : (
-            <Empty title="Your watchlist is empty">
-              Star a market with <StarIcon filled={false} size={13} /> to keep it here. Your watchlist is saved in this browser.
-            </Empty>
+            <NoMarketMatch state={show} needle={needle} list={list} />
           )
         ) : (
           <div className="table-wrap">

@@ -74,7 +74,7 @@ export function YourActivity() {
   }, [readBz, w.address, markets, historyVersion]);
 
   if (!w.address) {
-    return <Empty title="Connect a wallet to see your proposals and votes" action={<button className="primary" onClick={w.openConnect}>Connect</button>} />;
+    return <Empty title="Connect to see your proposals and votes" action={<button className="primary" onClick={w.openConnect}>Connect</button>} />;
   }
   if (!rows.data) {
     return rows.error ? <Empty title={explain(rows.error)} action={<button onClick={rows.reload}>Try again</button>} /> : <Loading what="Loading your proposals and votes" />;

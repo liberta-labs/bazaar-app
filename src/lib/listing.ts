@@ -4,7 +4,7 @@
  * match against the feed, and whether the one typed matches it. A listing whose description, feed or
  * 24/7 flag does not match what Pyth publishes is likely to be disputed, and the bond lost.
  */
-import { ProClient, PYTH_PRO, type ProSymbol, feedLabel, fromUsdcUnits, listings, toUsdcUnitsCeil, uma } from "@liberta-labs/bazaar-sdk";
+import { ProClient, PYTH_PRO, type ProSymbol, fromUsdcUnits, listings, toUsdcUnitsCeil, uma } from "@liberta-labs/bazaar-sdk";
 
 /**
  * What stops a proposal the wallet can't pay for: the listing pulls the whole `total` (bond plus seed,
@@ -78,8 +78,63 @@ export function suggestCompositeDescription(base: ProSymbol, quote: ProSymbol, i
 /** "Equity.US.AAPL/USD" -> "AAPL". */
 const tickerOf = (s: ProSymbol): string => feedLabelOf(s.symbol).split("/")[0] ?? feedLabelOf(s.symbol);
 
-/** "Crypto.BTC/USD" -> "BTC/USD". */
-export const feedLabelOf = (symbol: string): string => feedLabel(symbol);
+const FEED_CLASS: Record<string, string> = { Crypto: "crypto", Equity: "stock", Commodities: "commodity", FX: "FX", Metal: "metal", InterestRate: "interest rate", FundingRate: "funding rate" };
+
+/**
+ * A registry symbol read: the pair, with any part of its name that comes before it
+ * ("Equity.US.HEI.A/USD" -> "HEI.A/USD"), and what kind of feed it is, from the parts around it.
+ */
+function readSymbol(symbol: string, assetType: string): { readonly label: string; readonly kind: string } {
+  const parts = symbol.split(".");
+  // The pair is the last part with a "/"; a feed without one ("InterestRate.SOFR") goes by its last part.
+  let at = parts.length - 1;
+  while (at > 0 && !parts[at]!.includes("/")) at--;
+  if (!parts[at]!.includes("/")) at = parts.length - 1;
+  const path = parts.slice(0, at);
+  const suffix = parts.slice(at + 1);
+  const cls = path[0] ?? "";
+  // The parts that say what kind of feed it is, taken off the front; any left belong to the name.
+  let i = 1;
+  const country = cls === "Equity" && /^[A-Z]{2}$/.test(path[1] ?? "") ? path[i++]! : null;
+  const index = path[i] === "Index";
+  if (index) i++;
+  const nav = path[i] === "NAV";
+  if (nav) i++;
+  // A funding rate's venue and interval: "FundingRate.Deribit.8h.BTC/USD".
+  const venue = cls === "FundingRate" ? path.slice(i).join(" ") : "";
+  if (venue) i = path.length;
+  const label = [...path.slice(i), parts[at]!].join(".");
+  let kind = suffix.includes("RR")
+    ? "redemption rate"
+    : index
+      ? cls === "Crypto"
+        ? "crypto index"
+        : "Pyth index"
+      : nav
+        ? "fund NAV"
+        : country
+          ? `${country === "GB" ? "UK" : country} stock`
+          : (FEED_CLASS[cls] ?? assetType);
+  if (venue) kind += `, ${venue}`;
+  if (suffix.includes("EXT")) kind += ", extended hours";
+  return { label, kind };
+}
+
+/** "Crypto.BTC/USD" -> "BTC/USD", without a suffix Pyth adds after the pair: "Crypto.AAPLX/AAPL.RR" -> "AAPLX/AAPL". */
+export const feedLabelOf = (symbol: string): string => readSymbol(symbol, "").label;
+
+/**
+ * What a registry entry prices: "US stock", "JP stock", "crypto", "Pyth index", "fund NAV",
+ * "redemption rate". Feeds with the same pair differ here: AAPL/USD is both Equity.US.AAPL/USD,
+ * Apple's stock, and Equity.Index.AAPL/USD, Pyth's own price for it, kept through nights and weekends.
+ */
+export const feedKind = (s: Pick<ProSymbol, "symbol" | "assetType">): string => readSymbol(s.symbol, s.assetType).kind;
+
+/** Whether testnet lists a market on this feed: only US stocks and crypto, for now. */
+export function listableOnTestnet(s: Pick<ProSymbol, "symbol" | "assetType">): boolean {
+  const kind = feedKind(s);
+  return kind === "crypto" || kind.startsWith("US stock");
+}
 
 const COMMON = new Set(["US", "USD", "DOLLAR", "INC", "CORP", "CO", "LTD", "PLC", "THE", "AND", "OF", "CLASS", "SHARES", "COMMON", "STOCK", "ORDINARY", "FEED", "PYTH", "PRO", "VIA", "ON", "SPOT"]);
 

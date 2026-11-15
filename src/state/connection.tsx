@@ -231,7 +231,7 @@ function WalletProvider({ children }: { children: ReactNode }) {
   }, [walletProvider, rawChain]);
 
   const ensureChain = useCallback(async () => {
-    if (!walletProvider) throw new Error("Connect a wallet first.");
+    if (!walletProvider) throw new Error("Connect first.");
     try {
       await switchToChain(walletProvider, ACTIVE);
       setSwitchError(null);
@@ -289,7 +289,7 @@ function WalletProvider({ children }: { children: ReactNode }) {
     if (s.address && s.walletBz && s.walletProvider) return { address: s.address, walletBz: s.walletBz, provider: s.walletProvider };
     if (!s.address) {
       void open({ view: "Connect", namespace: "eip155" });
-      throw new NeedsWalletError("Connect a wallet to continue.");
+      throw new NeedsWalletError("Connect to continue.");
     }
     await ensureChain();
     // The connection is rebuilt by the effect above; wait for it briefly.

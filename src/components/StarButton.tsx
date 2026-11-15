@@ -1,4 +1,4 @@
-import { useWatchlist } from "../state/watchlist";
+import { type WatchlistName, useWatchlist } from "../state/watchlist";
 
 /**
  * A soft five-pointed star: plump points (the inner corners at about half the outer radius, where a
@@ -18,17 +18,21 @@ export function StarIcon({ filled, size = 16 }: { filled: boolean; size?: number
   );
 }
 
-/** A star that adds the market to your watchlist, or takes it off. Inside a clickable row, it doesn't open the market. */
-export function StarButton({ market }: { market: { readonly address: string; readonly label: string } }) {
-  const { has, toggle } = useWatchlist();
+/**
+ * A star that adds the market to a watchlist, or takes it off: the trading one unless `list` says
+ * "earn". Inside a clickable row, it doesn't open the market.
+ */
+export function StarButton({ market, list = "trade" }: { market: { readonly address: string; readonly label: string }; list?: WatchlistName }) {
+  const { has, toggle } = useWatchlist(list);
   const on = has(market.address);
+  const which = list === "earn" ? "your Earn watchlist" : "your watchlist";
   return (
     <button
       type="button"
       className={`star-btn${on ? " on" : ""}`}
       aria-pressed={on}
       aria-label={`Star ${market.label}`}
-      title={on ? "On your watchlist. Click to remove it." : "Add to your watchlist"}
+      title={on ? `On ${which}. Click to remove it.` : `Add to ${which}`}
       onClick={(e) => {
         e.stopPropagation();
         toggle(market.address);

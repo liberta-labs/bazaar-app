@@ -27,7 +27,7 @@ function ConnectButton() {
   if (!w.address) {
     return (
       <button className="primary" onClick={w.openConnect}>
-        Connect wallet
+        Connect
       </button>
     );
   }

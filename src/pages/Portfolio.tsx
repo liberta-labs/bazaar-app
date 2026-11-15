@@ -16,7 +16,7 @@ export function PortfolioPage() {
   const used = useMemo(() => [...acct.snaps.values()].filter(usesMarket).sort((a, b) => a.market.index - b.market.index), [acct.snaps]);
 
   if (!w.address) {
-    return <Empty title="Connect a wallet to see your portfolio" action={<button className="primary" onClick={w.openConnect}>Connect wallet</button>} />;
+    return <Empty title="Connect to see your portfolio" action={<button className="primary" onClick={w.openConnect}>Connect</button>} />;
   }
 
   return (

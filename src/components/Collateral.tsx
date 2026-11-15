@@ -143,7 +143,7 @@ export function CollateralPanel({
       {w.address && reason && value !== null && value > 0n && <div className="field-error">{reason}</div>}
       {!w.address ? (
         <button className="primary wide" onClick={w.openConnect}>
-          Connect wallet to {tab}
+          Connect to {tab}
         </button>
       ) : (
         <ActionButton className="primary wide" disabledReason={reason} onClick={submit}>

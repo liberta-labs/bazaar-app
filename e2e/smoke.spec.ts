@@ -6,7 +6,7 @@ import { DATA_TIMEOUT, expect, expectMarketList, firstMarketAddress, test } from
 test("the home page lists the markets", async ({ page }) => {
   await page.goto("./");
   await expect(page.getByRole("navigation", { name: "Main" }).first()).toBeVisible();
-  await expect(page.locator("header").getByRole("button", { name: "Connect wallet" })).toBeVisible();
+  await expect(page.locator("header").getByRole("button", { name: "Connect", exact: true })).toBeVisible();
   await expectMarketList(page);
 });
 
@@ -44,14 +44,14 @@ test("a market page shows its header, chart, order book and order ticket", async
   // The order ticket, asking for a wallet.
   const ticket = page.locator(".t-side section.panel").first();
   await expect(ticket.getByRole("radiogroup", { name: "Side" })).toBeVisible();
-  await expect(ticket.getByRole("button", { name: "Connect wallet" })).toBeVisible();
+  await expect(ticket.getByRole("button", { name: "Connect to trade" })).toBeVisible();
 });
 
 test("the portfolio asks for a wallet", async ({ page }) => {
   await page.goto("./#/portfolio");
-  const prompt = page.locator(".empty").filter({ hasText: "Connect a wallet to see your portfolio" });
+  const prompt = page.locator(".empty").filter({ hasText: "Connect to see your portfolio" });
   await expect(prompt).toBeVisible();
-  await expect(prompt.getByRole("button", { name: "Connect wallet" })).toBeVisible();
+  await expect(prompt.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
 });
 
 test("the proposals page renders", async ({ page }) => {

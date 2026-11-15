@@ -196,7 +196,7 @@ function YourProgress({ board }: { board: Leaderboard }) {
         <h2 style={{ marginTop: 0 }}>
           <E>🎮</E> Your progress
         </h2>
-        <Empty title="Connect a wallet to see your level, streak and badges" action={<button className="primary" onClick={w.openConnect}>Connect</button>}>
+        <Empty title="Connect to see your level, streak and badges" action={<button className="primary" onClick={w.openConnect}>Connect</button>}>
           Here's everything you can collect:
         </Empty>
         {collection}

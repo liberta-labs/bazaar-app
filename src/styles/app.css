@@ -210,6 +210,9 @@ button.sell { background: var(--down-fill); border-color: var(--down-fill); colo
 button.ghost { background: transparent; }
 button.link { background: none; border: none; color: var(--accent-text); padding: 0; min-height: 0; }
 button.small, .btn.small { padding: 4px 10px; min-height: 28px; font-size: 12px; }
+/* A link-style button reads as text: no button padding, even when small, and it wraps like text. */
+button.link.small { padding: 0; min-height: 0; }
+button.link { white-space: normal; text-align: left; justify-content: flex-start; }
 button.wide { width: 100%; }
 input, select, textarea {
   font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--border);
@@ -648,6 +651,10 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
   .funds tr.open td, .funds tr.detail-row > td { background: transparent; }
   .funds tr.detail-row > td[data-detail] { display: block; text-align: left; padding: 6px 0 4px; }
   .funds td.no-stake { display: none; }
+  /* Each fund's card keeps its watchlist star in its top right corner, beside the market's name. */
+  .funds tr { position: relative; }
+  .funds td.star-col { position: absolute; top: 4px; right: 4px; padding: 0; background: none; }
+  .funds td[data-main] { padding-right: 40px; }
   .rtable tr.group-row { padding: 0; }
   .rtable tr.group-row td { padding: 8px 12px 6px; }
 }

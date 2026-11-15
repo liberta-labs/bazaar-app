@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareValues, firstDir, nextSort, sortRows } from "../src/lib/sort";
+import { compareValues, firstDir, nextSort, nextSortFrom, sortRows } from "../src/lib/sort";
 
 describe("compareValues", () => {
   it("compares amounts as bigints, numbers alongside, and text without case", () => {
@@ -39,5 +39,27 @@ describe("firstDir and nextSort", () => {
     expect(nextSort(b, "value", "desc")).toBeNull();
     // Another column starts over.
     expect(nextSort(b, "market", "asc")).toEqual({ key: "market", dir: "asc" });
+  });
+});
+
+describe("nextSortFrom (a table that opens sorted, like the markets page by volume)", () => {
+  const volume = { key: "volume", dir: "desc" } as const;
+
+  it("toggles the opening column between its two directions", () => {
+    const asc = nextSortFrom(volume, "volume", "desc", volume);
+    expect(asc).toEqual({ key: "volume", dir: "asc" });
+    expect(nextSortFrom(asc, "volume", "desc", volume)).toEqual(volume);
+  });
+
+  it("returns from another column to the opening sort, not the rows' own order", () => {
+    const price = nextSortFrom(volume, "price", "desc", volume);
+    expect(price).toEqual({ key: "price", dir: "desc" });
+    const priceAsc = nextSortFrom(price, "price", "desc", volume);
+    expect(priceAsc).toEqual({ key: "price", dir: "asc" });
+    expect(nextSortFrom(priceAsc, "price", "desc", volume)).toEqual(volume);
+  });
+
+  it("is nextSort for a table that opens unsorted", () => {
+    expect(nextSortFrom({ key: "price", dir: "asc" }, "price", "desc", null)).toBeNull();
   });
 });

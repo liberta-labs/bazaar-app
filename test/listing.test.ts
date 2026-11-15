@@ -1,7 +1,7 @@
 import { type ProSymbol, listings } from "@liberta-labs/bazaar-sdk";
 import type { Hex } from "viem";
 import { describe, expect, it } from "vitest";
-import { continuousMismatch, descriptionMismatch, feedIsLive, scheduleIs247, searchSymbols, suggestCompositeDescription, suggestDescription } from "../src/lib/listing";
+import { continuousMismatch, descriptionMismatch, feedIsLive, feedKind, feedLabelOf, listableOnTestnet, scheduleIs247, searchSymbols, suggestCompositeDescription, suggestDescription } from "../src/lib/listing";
 
 const sym = (id: number, symbol: string, name: string, description: string, assetType: string, schedule: string, state = "stable"): ProSymbol => ({
   id,
@@ -118,5 +118,68 @@ describe("searchSymbols and feedIsLive", () => {
   it("tells a live feed from a deprecated or inactive one", () => {
     expect(feedIsLive(BTC)).toBe(true);
     expect(feedIsLive(WTI)).toBe(false);
+  });
+});
+
+describe("feedLabelOf and feedKind", () => {
+  const kind = (symbol: string, assetType = "") => feedKind({ symbol, assetType });
+
+  it("labels a feed by its pair, without a suffix Pyth adds after it", () => {
+    expect(feedLabelOf("Crypto.BTC/USD")).toBe("BTC/USD");
+    expect(feedLabelOf("Equity.US.AAPL/USD")).toBe("AAPL/USD");
+    expect(feedLabelOf("Crypto.AAPLX/AAPL.RR")).toBe("AAPLX/AAPL");
+    expect(feedLabelOf("Equity.US.AAPL/USD.EXT")).toBe("AAPL/USD");
+    expect(feedLabelOf("InterestRate.SOFR")).toBe("SOFR");
+  });
+
+  it("keeps a part of the name that comes before the pair", () => {
+    expect(feedLabelOf("Equity.US.HEI.A/USD")).toBe("HEI.A/USD");
+    expect(feedLabelOf("Crypto.AVALON.USDA/USD")).toBe("AVALON.USDA/USD");
+    expect(feedLabelOf("Crypto.FORD.SS/FORD.RR")).toBe("FORD.SS/FORD");
+  });
+
+  it("tells apart feeds that share a pair", () => {
+    expect(kind("Equity.US.AAPL/USD", "equity")).toBe("US stock");
+    expect(kind("Equity.Index.AAPL/USD", "equity")).toBe("Pyth index");
+    expect(kind("Equity.US.AAPL/USD.EXT", "equity")).toBe("US stock, extended hours");
+    expect(kind("Crypto.AAPLX/USD", "crypto")).toBe("crypto");
+    expect(kind("Crypto.AAPLX/AAPL.RR", "crypto-redemption-rate")).toBe("redemption rate");
+  });
+
+  it("names the other kinds of feed Pyth lists", () => {
+    expect(kind("Equity.JP.1321/JPY")).toBe("JP stock");
+    expect(kind("Equity.GB.BARC/GBP")).toBe("UK stock");
+    expect(kind("Metal.Index.GOLD/USD")).toBe("Pyth index");
+    expect(kind("Crypto.Index.GMCI30/USD")).toBe("crypto index");
+    expect(kind("Crypto.NAV.ACRED/USD")).toBe("fund NAV");
+    expect(kind("FX.EUR/USD")).toBe("FX");
+    expect(kind("InterestRate.SOFR")).toBe("interest rate");
+    expect(kind("InterestRate.Index.CMUS4W")).toBe("Pyth index");
+    expect(kind("Equity.US.VXQ6", "equity")).toBe("US stock");
+    expect(kind("FundingRate.Deribit.8h.BTC/USD")).toBe("funding rate, Deribit 8h");
+    expect(kind("FundingRate.Binance.BTC/USDT")).toBe("funding rate, Binance");
+    expect(kind("Something.NEW/USD", "macro")).toBe("macro");
+  });
+});
+
+describe("listableOnTestnet", () => {
+  const ok = (symbol: string) => listableOnTestnet({ symbol, assetType: "" });
+
+  it("lists US stocks and crypto", () => {
+    expect(ok("Equity.US.AAPL/USD")).toBe(true);
+    expect(ok("Crypto.BTC/USD")).toBe(true);
+    expect(ok("Crypto.AAPLX/USD")).toBe(true);
+  });
+
+  it("refuses every other kind of feed", () => {
+    expect(ok("Equity.Index.AAPL/USD")).toBe(false);
+    expect(ok("Equity.JP.1321/JPY")).toBe(false);
+    expect(ok("FX.EUR/USD")).toBe(false);
+    expect(ok("Metal.XAU/USD")).toBe(false);
+    expect(ok("Commodities.WTI/USD")).toBe(false);
+    expect(ok("Crypto.AAPLX/AAPL.RR")).toBe(false);
+    expect(ok("Crypto.Index.GMCI30/USD")).toBe(false);
+    expect(ok("Crypto.NAV.ACRED/USD")).toBe(false);
+    expect(ok("InterestRate.SOFR")).toBe(false);
   });
 });

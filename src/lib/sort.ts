@@ -54,3 +54,11 @@ export function nextSort(cur: SortState | null, key: string, first: SortDir): So
   if (cur.dir === first) return { key, dir: first === "asc" ? "desc" : "asc" };
   return null;
 }
+
+/**
+ * A click on a table that opens sorted (`initial`, null for none): as {@link nextSort}, but where that
+ * would go back to the table's own order, back to the sort it opened with instead.
+ */
+export function nextSortFrom(cur: SortState | null, key: string, first: SortDir, initial: SortState | null): SortState | null {
+  return nextSort(cur, key, first) ?? initial;
+}

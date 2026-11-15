@@ -1,13 +1,14 @@
 /**
  * The market filters: All, Watchlist and each kind of asset (lib/marketCategory.ts), as a row of
- * chips, the one picked last kept per browser. The markets page and the trade page's market picker
- * share them, each remembering its own pick.
+ * chips, the one picked last kept per browser. The markets page, the Earn page and the trade page's
+ * market picker share them, each remembering its own pick.
  */
 import type { markets as mk } from "@liberta-labs/bazaar-sdk";
 import { useMemo, useState } from "react";
 import { CATEGORIES, type MarketCategory, marketCategory } from "../lib/marketCategory";
-import { useWatchlist } from "../state/watchlist";
+import { type WatchlistName, useWatchlist } from "../state/watchlist";
 import { StarIcon } from "./StarButton";
+import { Empty } from "./ui";
 
 /** What a list shows: every market, your starred ones, or one kind of asset. */
 export type MarketFilter = "all" | "watchlist" | MarketCategory;
@@ -29,11 +30,16 @@ export interface MarketFilterState {
   readonly label: string;
   readonly pick: (f: MarketFilter) => void;
   readonly inFilter: (m: mk.MarketInfo) => boolean;
+  /** Which watchlist the Watchlist chip shows. */
+  readonly watchlist: WatchlistName;
 }
 
-/** The filter state for a list of markets, the pick kept in localStorage under `storageKey`. */
-export function useMarketFilter(list: readonly mk.MarketInfo[], storageKey: string): MarketFilterState {
-  const { has: starred } = useWatchlist();
+/**
+ * The filter state for a list of markets, the pick kept in localStorage under `storageKey`. The
+ * Watchlist chip shows the `watchlist` named: the trading one unless the page says "earn".
+ */
+export function useMarketFilter(list: readonly mk.MarketInfo[], storageKey: string, watchlist: WatchlistName = "trade"): MarketFilterState {
+  const { has: starred } = useWatchlist(watchlist);
   const [picked, setPicked] = useState<MarketFilter>(() => {
     try {
       const v = localStorage.getItem(storageKey);
@@ -64,6 +70,7 @@ export function useMarketFilter(list: readonly mk.MarketInfo[], storageKey: stri
     label: filters.find((f) => f.id === filter)?.label ?? "",
     pick,
     inFilter: (m) => filter === "all" || (filter === "watchlist" ? starred(m.address) : category.get(m.address) === filter),
+    watchlist,
   };
 }
 
@@ -78,5 +85,37 @@ export function MarketFilterChips({ state }: { state: MarketFilterState }) {
         </button>
       ))}
     </div>
+  );
+}
+
+/**
+ * What a filtered table says when it has no rows left: the search missed (offering to search every
+ * market when it would find some there), or the watchlist is empty.
+ */
+export function NoMarketMatch({ state, needle, list }: { state: MarketFilterState; needle: string; list: readonly mk.MarketInfo[] }) {
+  const { filter, pick, label } = state;
+  if (!needle) {
+    const earn = state.watchlist === "earn";
+    return (
+      <Empty title={earn ? "Your Earn watchlist is empty" : "Your watchlist is empty"}>
+        Star {earn ? "a fund" : "a market"} with <StarIcon filled={false} size={13} /> to keep it here. {earn ? "It's kept apart from your trading watchlist and" : "Your watchlist is"} saved in this browser.
+      </Empty>
+    );
+  }
+  // Matches the search finds outside the picked filter.
+  const elsewhere = filter !== "all" ? list.filter((m) => matchesSearch(m, needle)).length : 0;
+  return (
+    <Empty
+      title={filter === "all" ? "No market matches your search" : filter === "watchlist" ? "No market on your watchlist matches your search" : `No match in ${label}`}
+      action={
+        elsewhere > 0 && (
+          <button className="small" onClick={() => pick("all")}>
+            Search all markets ({elsewhere})
+          </button>
+        )
+      }
+    >
+      {elsewhere > 0 ? "" : "Try another name, like BTC or ETH."}
+    </Empty>
   );
 }

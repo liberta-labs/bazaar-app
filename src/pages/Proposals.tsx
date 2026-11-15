@@ -23,9 +23,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useState } f
 import { Link, useSearchParams } from "react-router-dom";
 import type { Address, Hex } from "viem";
 import { HistoryList } from "../components/History";
-import { FaucetButton } from "../components/Faucet";
 import { HistoryLag } from "../components/HistoryLag";
-import { TestUsdcHelpLink } from "../components/TestUsdcHelp";
 import { Modal } from "../components/Modal";
 import { YourActivity } from "../components/YourActivity";
 import { Empty, Loading, StatusBadge, Term, Tip, TxLink, useAsync } from "../components/ui";
@@ -39,7 +37,9 @@ import {
   continuousMismatch,
   descriptionMismatch,
   feedIsLive,
+  feedKind,
   feedLabelOf,
+  listableOnTestnet,
   listingShortfall,
   registryClient,
   scheduleIs247,
@@ -120,7 +120,39 @@ function useCanSettleEarly(): boolean {
   return Boolean(owner.data && w.address && owner.data.toLowerCase() === w.address.toLowerCase());
 }
 
-const SETTLE_EARLY_TIP = "Only the deployer sees this. It settles the claim now as accepted, without waiting for the dispute window to end.";
+const SETTLE_EARLY_TIP = "Testnet only, and only the deployer sees this. It settles the claim now as accepted, without waiting for the dispute window to end.";
+const RULE_TIP = "Testnet only, and only the deployer sees this: on mainnet UMA's voters decide disputes.";
+
+/**
+ * The deployer's ruling on a disputed claim. On testnet the stand-in oracle's owner rules in UMA's
+ * voters' place: accepting the proposal rules its claim true, rejecting it rules the claim false (the
+ * disputer was right). Either button decides the dispute and settles the claim in one transaction
+ * (uma.settleEarly with that verdict), and the side that wins gets both bonds. `ifTrue` and `ifFalse`
+ * say what each verdict does to this kind of claim.
+ */
+function RuleButtons({ onRule, ifTrue, ifFalse }: { onRule: (result: boolean) => void; ifTrue: string; ifFalse: string }) {
+  return (
+    <>
+      <button className="small primary" title={`${RULE_TIP} It sides with the proposer and settles the dispute: ${ifTrue}`} onClick={() => onRule(true)}>
+        Accept proposal
+      </button>
+      <button className="small" title={`${RULE_TIP} It sides with the disputer and settles the dispute: ${ifFalse}`} onClick={() => onRule(false)}>
+        Reject proposal
+      </button>
+    </>
+  );
+}
+
+/**
+ * {@link RuleButtons} in place of `children` while the claim is disputed and the connected wallet can
+ * rule on it (`canRule`), for a list that doesn't say which of its claims are disputed: it reads the
+ * claim's phase from the oracle, again whenever `version` changes.
+ */
+function RuleIfDisputed({ id, home, canRule, version, children, ...rule }: { id: Hex; home: "factory" | "terminator"; canRule: boolean; version: number; children: ReactNode } & Parameters<typeof RuleButtons>[0]) {
+  const { readBz } = useRead();
+  const st = useAsync(async () => (readBz && canRule ? readBz.uma.assertionStatus(id, { home }) : null), [readBz, id, home, canRule, version]);
+  return st.data?.phase === "disputed" ? <RuleButtons {...rule} /> : <>{children}</>;
+}
 
 function Notice({ text, onClose }: { text: string | null; onClose: () => void }) {
   if (!text) return null;
@@ -141,7 +173,7 @@ function AssertionLine({ id, home }: { id: Hex; home: "factory" | "terminator" }
   if (!s) return <span className="small muted">reading UMA…</span>;
   return (
     <>
-      <Tip text={uma.ASSERTION_PHASE_TEXT[s.phase]}>
+      <Tip text={phaseText(s.phase)}>
         <span className="small term">
           UMA: {s.phase}
           {s.disputableUntil ? ` · disputable ${relative(s.disputableUntil, s.now)}` : ""}
@@ -158,24 +190,26 @@ const burnedShare = new Map<string, Promise<bigint | null>>();
 /**
  * What disputing a claim stakes and what it can win: the disputer matches the bond; if UMA's voters side
  * with them they get both bonds back less the share UMA burns as its fee, and if not, the bond is gone.
+ * On testnet the stand-in oracle takes no fee: the winner gets both bonds in full.
  */
 function DisputeStake({ bond, oo }: { bond: bigint; oo: Address }) {
   const { readBz } = useRead();
   const burned = useAsync(async () => {
-    if (!readBz) return null;
+    if (!readBz || TEAM_RULES) return null;
     const k = oo.toLowerCase();
     if (!burnedShare.has(k)) burnedShare.set(k, readBz.uma.burnedBondPercentage({ oo }).catch(() => null));
     return burnedShare.get(k)!;
   }, [readBz, oo]);
-  // An oracle that doesn't report its burn share (the testnet one doesn't) is taken at UMA's standard
-  // half, and the figure is marked as an estimate.
-  const reported = burned.data ?? null;
+  // An oracle that doesn't report its burn share is taken at UMA's standard half, and the figure is
+  // marked as an estimate.
+  const reported = TEAM_RULES ? 0n : (burned.data ?? null);
   const share = reported ?? UMA_STANDARD_BURN;
   const back = bond * 2n - (bond * share) / 10n ** 18n;
   const est = reported === null ? "≈" : "";
+  const who = TEAM_RULES ? TEAM_RULES_TEXT : "UMA's voters decide in a few days.";
   return (
     <Tip
-      text={`A dispute bonds ${uma.usdcText(bond)}, like the proposer's. UMA's voters decide in a few days: win and get ${est}${uma.usdcText(back)} back, lose and the bond is gone.${reported === null ? " Estimated with UMA's standard fee." : ""}`}
+      text={`A dispute bonds ${uma.usdcText(bond)}, like the proposer's. ${who} Win and get ${est}${uma.usdcText(back)} back, lose and the bond is gone.${reported === null ? " Estimated with UMA's standard fee." : ""}`}
     >
       <div className="small term">
         Dispute stake {uma.usdcText(bond)} · wins {est}+{uma.usdcText(back - bond)}
@@ -186,6 +220,33 @@ function DisputeStake({ bond, oo }: { bond: bigint; oo: Address }) {
 
 /** UMA's standard burn on a disputed bond, 1e18 = 100%: half, as the live OOv3 is set. */
 const UMA_STANDARD_BURN = 5n * 10n ** 17n;
+
+/**
+ * Whether the Bazaar team rules on disputes. UMA has no oracle on Arbitrum Sepolia, so the testnet runs
+ * on a stand-in whose owner, the account that deployed Bazaar there, rules in UMA's voters' place; it
+ * takes no fee, so the winner gets both bonds in full.
+ */
+const TEAM_RULES = ACTIVE.testnet;
+const TEAM_RULES_TEXT = `On testnet the Bazaar team decides disputes, because UMA runs no oracle on ${ACTIVE.name}. On mainnet, UMA's voters decide them.`;
+
+/** A claim's phase in a sentence, a disputed one naming who rules on it. */
+function phaseText(phase: uma.AssertionPhase): string {
+  return phase === "disputed" && TEAM_RULES ? `Disputed. ${TEAM_RULES_TEXT} It can be settled once the team has ruled.` : uma.ASSERTION_PHASE_TEXT[phase];
+}
+
+/**
+ * On testnet, who decides disputes, said where it can't be missed: the Bazaar team here, UMA's voters
+ * on mainnet, and what the winner gets on each.
+ */
+function TestnetRulingNote() {
+  if (!TEAM_RULES) return null;
+  return (
+    <div className="callout small">
+      <b>Testnet only:</b> disputes here are decided by the Bazaar team, because UMA runs no oracle on {ACTIVE.name}, and the winner gets both bonds in full. On mainnet every dispute goes to
+      UMA's voters, which takes a few days, and UMA keeps half the losing bond as its fee.
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------------------------
 // How it works
@@ -260,8 +321,11 @@ function HowItWorks({ tab }: { tab: ProposalTab }) {
           <b>Not disputed?</b> It passes when the window ends. Anyone can settle it, and the proposer gets their bond back.
         </li>
         <li>
-          <b>Disputed?</b> UMA's voters decide, which takes a few days. The winner gets their bond back plus the loser's, less UMA's fee; the loser's bond is gone. Each open
-          proposal shows what a dispute stakes and what it wins.
+          <b>Disputed?</b>{" "}
+          {TEAM_RULES
+            ? `On testnet the Bazaar team decides, because UMA runs no oracle on ${ACTIVE.name}, and the winner gets both bonds in full. On mainnet UMA's voters decide, which takes a few days, and the winner gets their bond back plus the loser's, less UMA's fee. Either way the loser's bond is gone.`
+            : "UMA's voters decide, which takes a few days. The winner gets their bond back plus the loser's, less UMA's fee; the loser's bond is gone."}{" "}
+          Each open proposal shows what a dispute stakes and what it wins.
         </li>
       </ol>
       <div className="kv small">
@@ -442,12 +506,14 @@ function FeedCard({ s, role }: { s: ProSymbol; role?: string }) {
       </div>
       <div>{s.description}</div>
       <div className="muted">
-        {s.symbol} · {s.assetType} · {is247 === null ? "schedule unknown" : is247 ? "trades 24/7" : `trading hours (${zone})`} ·{" "}
+        {s.symbol} · {feedKind(s)} · {is247 === null ? "schedule unknown" : is247 ? "trades 24/7" : `trading hours (${zone})`} ·{" "}
         <span className={feedIsLive(s) ? "" : "down"}>{s.state}</span>
       </div>
     </div>
   );
 }
+
+const TESTNET_ONLY = "Only US stocks and crypto can be listed on testnet for now";
 
 /** Pyth Terminal's list of every Pyth Pro feed, by asset class; each feed's page shows its feed ID. */
 const PYTH_FEEDS_URL = "https://app.pyth.com/explore/all";
@@ -462,8 +528,8 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
   const [descTouched, setDescTouched] = useState(false);
   const lookup = useFeedLookup(feed, registry.data);
   const resolved = lookup.kind === "raw" || lookup.kind === "composite" ? lookup : null;
-  // The wallet's USDC, read again after a faucet claim and whenever the user comes back to the page
-  // (say, from moving USDC in their wallet): the listing pulls the whole amount at once.
+  // The wallet's USDC, read again whenever the user comes back to the page (say, from moving USDC in
+  // their wallet): the listing pulls the whole amount at once.
   const w = useWallet();
   const { readBz } = useRead();
   const [heldN, setHeldN] = useState(0);
@@ -495,12 +561,20 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
   const descWarn = !descErr && feeds.length ? descriptionMismatch(desc, feeds) : null;
   const flagWarn = continuousMismatch(continuous, feeds, lookup.kind === "composite");
   const dead = feeds.filter((s) => !feedIsLive(s));
+  // Testnet lists US stocks and crypto only, for now; a composite's FX leg is neither.
+  const unlisted = ACTIVE.testnet ? feeds.filter((s) => !listableOnTestnet(s)) : [];
   const blocker =
     lookup.kind === "unknown"
       ? "Pyth Pro's registry lists no feed with this ID, and it isn't a composite registered on Bazaar's oracle. A listing of it would be disputed and lose its bond."
       : lookup.kind === "invalid"
         ? lookup.message
-        : null;
+        : unlisted.length
+          ? `${TESTNET_ONLY}, so this ${
+              lookup.kind === "composite"
+                ? `composite can't be proposed: it uses ${unlisted.map((s) => `the ${feedKind(s)} feed ${s.symbol}`).join(" and ")}.`
+                : `${feedKind(unlisted[0]!)} feed (${unlisted[0]!.symbol}) can't be proposed.`
+            }`
+          : null;
 
   return (
     <Modal title="Propose a new market" onClose={onClose} wide>
@@ -519,7 +593,7 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
             every Pyth feed ↗
           </a>
           , then search for its name or enter its feed ID here.
-          {ACTIVE.testnet && <b> On testnet, only crypto and US equities are available for now.</b>}
+          {ACTIVE.testnet && <b> {TESTNET_ONLY}.</b>}
         </div>
         {registry.error ? <div className="small accent">Pyth's registry can't be read right now, so the feed can't be checked here. The proposal is still checked against it when you review.</div> : null}
         {lookup.kind === "search" &&
@@ -537,7 +611,7 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
                         <b>{feedLabelOf(s.symbol)}</b>
                         <div className="small muted">{s.description}</div>
                       </td>
-                      <td className="small muted">{s.assetType}</td>
+                      <td className="small muted">{feedKind(s)}</td>
                       <td className="small">{scheduleIs247(s.schedule) ? "24/7" : "trading hours"}</td>
                       <td className={`small ${feedIsLive(s) ? "muted" : "down"}`}>{s.state}</td>
                       <td className="num small">#{s.id}</td>
@@ -604,17 +678,7 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
           Total deposit, bond plus seed (USDC)
           <input className="num" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} />
         </label>
-        {shortfall && (
-          <div className="callout bad small">
-            {shortfall}
-            {ACTIVE.testnet && (
-              <>
-                {" "}
-                <FaucetButton compact onDone={readHeldAgain} /> <TestUsdcHelpLink />
-              </>
-            )}
-          </div>
-        )}
+        {shortfall && <div className="callout bad small">{shortfall}</div>}
         <Notice text={costed.notice} onClose={costed.clear} />
         <button
           className="primary"
@@ -640,7 +704,7 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
         >
           Review proposal
         </button>
-        {(descWarn || flagWarn) && resolved && <div className="small muted">You can still review it, but fix the warnings above unless you're sure: UMA's verifiers judge the listing on them.</div>}
+        {(descWarn || flagWarn) && resolved && !blocker && <div className="small muted">You can still review it, but fix the warnings above unless you're sure: UMA's verifiers judge the listing on them.</div>}
       </div>
     </Modal>
   );
@@ -650,7 +714,7 @@ function ProposeListing({ onClose }: { onClose: () => void }) {
 const LISTING_STATUS: Record<listings.DeploymentStatus, string> = {
   inReview: "In UMA review",
   settleable: "Ready to deploy",
-  disputed: "Disputed: UMA's voters decide",
+  disputed: TEAM_RULES ? "Disputed: the Bazaar team decides (testnet only)" : "Disputed: UMA's voters decide",
   deployed: "Deployed",
   notDeployed: "Not deployed",
 };
@@ -732,7 +796,7 @@ function Listings() {
                           { k: "Disputed", v: yesNo(l.disputed) },
                           { k: "UMA assertion", v: <Mono>{l.assertionId}</Mono> },
                         ]}
-                        note="UMA's voters judge a claim the factory writes from the description, the feed and the 24/7 flag, followed by the checks every listing must pass: an active Pyth Pro feed, an eligible asset, the asset's own spot feed and one market per asset, a US dollar price, the right trading schedule, and no termination event pending."
+                        note={`UMA's voters judge a claim the factory writes from the description, the feed and the 24/7 flag, followed by the checks every listing must pass: an active Pyth Pro feed, an eligible asset, the asset's own spot feed and one market per asset, a US dollar price, the right trading schedule, and no termination event pending.${TEAM_RULES ? " On testnet the Bazaar team judges a disputed claim in their place." : ""}`}
                       />
                     </td>
                     <td data-label="Status">
@@ -761,7 +825,16 @@ function Listings() {
                             Settle early
                           </button>
                         )}
-                        {(l.status === "settleable" || l.status === "disputed") && (
+                        {l.status === "disputed" && early && (
+                          <RuleButtons
+                            ifTrue="the market deploys with its seed, and the proposer gets both bonds."
+                            ifFalse="no market is deployed, the seed is owed back to the proposer, and the disputer gets both bonds."
+                            onRule={(result) =>
+                              void costed.run(result ? "Accept the listing" : "Reject the listing", (bz, user) => bz.uma.settleEarly({ assertionId: l.assertionId, from: user, result, home: "factory" }), reload)
+                            }
+                          />
+                        )}
+                        {(l.status === "settleable" || (l.status === "disputed" && !early)) && (
                           <button className="small primary" onClick={() => void costed.run("Settle listing", (bz, user) => bz.listings.settleDeploymentProposal({ assertionId: l.assertionId, from: user }), reload)}>
                             Settle
                           </button>
@@ -1051,25 +1124,37 @@ function MarketTermination({
                   </td>
                   <td data-actions="">
                     <div className="row" style={{ justifyContent: "flex-end" }}>
-                      {now < c.livenessEndsAt && (
-                        <button className="small" onClick={act("Dispute claim", (bz, user) => bz.uma.disputeAssertion({ assertionId: c.assertionId, from: user, home: "terminator" }))}>
-                          Dispute
-                        </button>
-                      )}
-                      {now < c.livenessEndsAt && early && (
-                        <button
-                          className="small primary"
-                          title={SETTLE_EARLY_TIP}
-                          onClick={act("Settle claim early", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, home: "terminator" }))}
-                        >
-                          Settle early
-                        </button>
-                      )}
-                      {now >= c.livenessEndsAt && (
-                        <button className="small primary" onClick={act("Settle claim", (bz, user) => bz.termination.settleTerminationProposal({ assertionId: c.assertionId, from: user }))}>
-                          Settle
-                        </button>
-                      )}
+                      <RuleIfDisputed
+                        id={c.assertionId}
+                        home="terminator"
+                        canRule={early}
+                        version={n}
+                        ifTrue="the market is scheduled to terminate at the claim's cutoff, and the proposer gets both bonds."
+                        ifFalse="the market keeps trading, and the disputer gets both bonds."
+                        onRule={(result) =>
+                          act(result ? "Accept the claim" : "Reject the claim", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, result, home: "terminator" }))()
+                        }
+                      >
+                        {now < c.livenessEndsAt && (
+                          <button className="small" onClick={act("Dispute claim", (bz, user) => bz.uma.disputeAssertion({ assertionId: c.assertionId, from: user, home: "terminator" }))}>
+                            Dispute
+                          </button>
+                        )}
+                        {now < c.livenessEndsAt && early && (
+                          <button
+                            className="small primary"
+                            title={SETTLE_EARLY_TIP}
+                            onClick={act("Settle claim early", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, home: "terminator" }))}
+                          >
+                            Settle early
+                          </button>
+                        )}
+                        {now >= c.livenessEndsAt && (
+                          <button className="small primary" onClick={act("Settle claim", (bz, user) => bz.termination.settleTerminationProposal({ assertionId: c.assertionId, from: user }))}>
+                            Settle
+                          </button>
+                        )}
+                      </RuleIfDisputed>
                     </div>
                   </td>
                 </tr>
@@ -1348,13 +1433,25 @@ function Identifier() {
             <span>
               {s.pending ? (
                 <>
-                  {s.pending.newIdentifierText ?? s.pending.newIdentifier} · {uma.ASSERTION_PHASE_TEXT[s.pending.assertion.phase]}
-                  {(s.pending.assertion.phase === "settleable" || s.pending.assertion.phase === "disputed") && (
-                    <div>
-                      <button className="small primary" onClick={() => void costed.run("Settle upgrade", (bz, user) => bz.governance.settleIdentifierUpgradeProposal({ assertionId: s.pending!.assertionId, from: user }), reload)}>
-                        Settle
-                      </button>
+                  {s.pending.newIdentifierText ?? s.pending.newIdentifier} · {phaseText(s.pending.assertion.phase)}
+                  {s.pending.assertion.phase === "disputed" && early ? (
+                    <div className="row">
+                      <RuleButtons
+                        ifTrue="the upgrade is queued behind its timelock, and the proposer gets both bonds."
+                        ifFalse="the upgrade is dropped, and the disputer gets both bonds."
+                        onRule={(result) =>
+                          void costed.run(result ? "Accept the upgrade" : "Reject the upgrade", (bz, user) => bz.uma.settleEarly({ assertionId: s.pending!.assertionId, from: user, result, home: "factory" }), reload)
+                        }
+                      />
                     </div>
+                  ) : (
+                    (s.pending.assertion.phase === "settleable" || s.pending.assertion.phase === "disputed") && (
+                      <div>
+                        <button className="small primary" onClick={() => void costed.run("Settle upgrade", (bz, user) => bz.governance.settleIdentifierUpgradeProposal({ assertionId: s.pending!.assertionId, from: user }), reload)}>
+                          Settle
+                        </button>
+                      </div>
+                    )
                   )}
                   {s.pending.assertion.phase === "liveness" && (
                     <div>
@@ -1525,6 +1622,7 @@ export function ProposalsPage() {
           .
         </p>
       </div>
+      <TestnetRulingNote />
       <HistoryLag />
       <div className="tabs" role="tablist" aria-label="Kind of proposal">
         {PROPOSAL_TABS.map((t) => (

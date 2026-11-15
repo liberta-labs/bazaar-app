@@ -4,7 +4,7 @@
  * and a third time returns the table to its own order.
  */
 import { type KeyboardEvent, useState } from "react";
-import { type SortState, type SortValue, firstDir, nextSort, sortRows } from "../lib/sort";
+import { type SortState, type SortValue, firstDir, nextSortFrom, sortRows } from "../lib/sort";
 
 export interface SortHeaderProps {
   readonly className: string;
@@ -16,14 +16,18 @@ export interface SortHeaderProps {
   readonly title: string;
 }
 
-export function useSort<T>(rows: readonly T[], keys: Readonly<Record<string, (row: T) => SortValue>>) {
-  const [state, setState] = useState<SortState | null>(null);
+/**
+ * `initial` opens the table sorted by one of its columns (the markets page: 24-hour volume, highest
+ * first); a third click on a header then returns to that sort rather than the rows' own order.
+ */
+export function useSort<T>(rows: readonly T[], keys: Readonly<Record<string, (row: T) => SortValue>>, initial: SortState | null = null) {
+  const [state, setState] = useState<SortState | null>(initial);
   const by = state ? keys[state.key] : undefined;
   const sorted: readonly T[] = state && by ? sortRows(rows, by, state.dir) : rows;
   /** Props for the header of column `key`, with any classes of its own. */
   const th = (key: string, className = ""): SortHeaderProps => {
     const dir = state?.key === key ? state.dir : undefined;
-    const toggle = () => setState((s) => nextSort(s, key, firstDir(rows, keys[key] ?? (() => null))));
+    const toggle = () => setState((s) => nextSortFrom(s, key, firstDir(rows, keys[key] ?? (() => null)), initial));
     return {
       className: `sortable ${className}`.trim(),
       onClick: toggle,

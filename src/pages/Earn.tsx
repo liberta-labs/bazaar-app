@@ -2,7 +2,9 @@ import { type Bazaar, type history, type insurance, type markets, MIN_COLLATERAL
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { HistoryLag } from "../components/HistoryLag";
+import { MarketFilterChips, NoMarketMatch, matchesSearch, useMarketFilter } from "../components/MarketFilters";
 import { Modal } from "../components/Modal";
+import { StarButton } from "../components/StarButton";
 import { ActionButton, Empty, Loading, Pnl, StatusBadge, Term, Tip, useAsync } from "../components/ui";
 import { explain } from "../lib/errors";
 import { amount, dateTime, parseInput, pct, relative, signedPct, signedUsd, toInput, usd } from "../lib/format";
@@ -162,7 +164,7 @@ function DepositDialog({ m, snap, onClose }: { m: markets.MarketInfo; snap: mark
         {value !== null && value > 0n && reason && <div className="field-error">{reason}</div>}
         {!w.address ? (
           <button className="primary" onClick={w.openConnect}>
-            Connect wallet to deposit
+            Connect to deposit
           </button>
         ) : (
         <ActionButton
@@ -498,6 +500,9 @@ function FundRow({
             {held ? "Add more" : "Insure"}
           </button>
         </td>
+        <td className="star-col">
+          <StarButton market={m} list="earn" />
+        </td>
       </tr>
       {expanded && provider && d && (
         <tr className="detail-row">
@@ -515,6 +520,7 @@ export function EarnPage() {
   const w = useWallet();
   const { snaps } = useMarketSnapshots();
   const [insure, setInsure] = useState<markets.MarketInfo | null>(null);
+  const [q, setQ] = useState("");
   const providers = useAsync(async () => {
     if (!readBz || !w.address) return [];
     return (await readBz.history.insuranceProviders({ account: w.address, first: 100 })).items;
@@ -595,9 +601,17 @@ export function EarnPage() {
     stake: (m) => holdings.data?.get(keyOf(m.address))?.value,
   });
 
+  // The same filters and search as the markets page, over the funds listed here, with a watchlist of
+  // its own (the funds you follow, apart from the markets you trade); the filter picked is kept apart
+  // from that page's too. Applied after the sort, so the reads above cover every fund.
+  const show = useMarketFilter(rows, "bazaar.earnFilter", "earn");
+  const needle = q.trim().toLowerCase();
+  const shown = sorted.filter((m) => show.inFilter(m) && matchesSearch(m, needle));
+
   const stakeColumn = mine.size > 0;
-  const cols = stakeColumn ? 7 : 6;
-  const groups = !sorting && stakeColumn && ordered.some((m) => !mine.has(keyOf(m.address)));
+  const cols = stakeColumn ? 8 : 7;
+  // "Your funds" and "More markets" headings, while both are in view.
+  const groups = !sorting && shown.some((m) => mine.has(keyOf(m.address))) && shown.some((m) => !mine.has(keyOf(m.address)));
   const waitingForMine = !!w.address && providers.loading && !providers.data;
 
   return (
@@ -615,9 +629,15 @@ export function EarnPage() {
       <HistoryLag />
       <section className="panel tight">
         <div className="panel-head">
-          <h2>Insurance funds</h2>
-          {stakeColumn && <span className="small muted hide-sm">Click a market you insure to see your position and withdraw.</span>}
+          <h2 style={{ whiteSpace: "nowrap" }}>Insurance funds</h2>
+          {stakeColumn && (
+            <span className="small muted hide-sm" style={{ marginLeft: "auto" }}>
+              Click a market you insure to see your position and withdraw.
+            </span>
+          )}
+          <input style={{ maxWidth: 260 }} placeholder="Search markets" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search markets" />
         </div>
+        {rows.length > 0 && <MarketFilterChips state={show} />}
         {w.address && !waitingForMine && !mine.size && rows.length > 0 && (
           <p className="small muted" style={{ margin: 0, padding: "10px 14px 0" }}>
             You don't insure any market yet. Pick one below and deposit at least 5 USDC.
@@ -625,6 +645,8 @@ export function EarnPage() {
         )}
         {!rows.length || waitingForMine ? (
           list.length && !waitingForMine ? <Empty title="No live markets right now" /> : <Loading what="Loading markets" />
+        ) : !shown.length ? (
+          <NoMarketMatch state={show} needle={needle} list={rows} />
         ) : (
           <div className="table-wrap">
             <table className="rtable funds">
@@ -645,12 +667,15 @@ export function EarnPage() {
                   <th {...th("sharePrice", "num hide-sm")}>Share price, 30 days</th>
                   {stakeColumn && <th {...th("stake", "num")}>Your stake</th>}
                   <th></th>
+                  <th className="star-col">
+                    <span className="sr-only">Watchlist</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((m, i) => {
+                {shown.map((m, i) => {
                   const isMine = mine.has(keyOf(m.address));
-                  const first = i === 0 || isMine !== mine.has(keyOf(sorted[i - 1]!.address));
+                  const first = i === 0 || isMine !== mine.has(keyOf(shown[i - 1]!.address));
                   return (
                     <Fragment key={m.address}>
                       {groups && first && (

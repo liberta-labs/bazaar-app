@@ -496,7 +496,7 @@ export function AccountTabs({ className = "panel tight", defaultTab = "positions
       </div>
       <TableToolsSlot.Provider value={tools}>
       {!w.address ? (
-        <Empty title="Connect a wallet to see your balances, positions, orders and history" action={<button className="primary" onClick={w.openConnect}>Connect wallet</button>} />
+        <Empty title="Connect to see your balances, positions, orders and history" action={<button className="primary" onClick={w.openConnect}>Connect</button>} />
       ) : tab === "balances" ? (
         !acct.loaded ? <Loading /> : <BalancesTable snaps={all} />
       ) : tab === "positions" ? (

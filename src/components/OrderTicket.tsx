@@ -344,7 +344,7 @@ export function OrderTicket({
   const maxSize = closeOnly ? closeSize : gateMax;
   const maxIsClose = maxSize !== null && maxSize === closeSize;
   const maxReason = !w.address
-    ? "Connect a wallet first."
+    ? "Connect first."
     : !sizingPrice
       ? "Waiting for a price."
       : maxSize === null
@@ -822,7 +822,7 @@ export function OrderTicket({
 
       {!w.address ? (
         <button className="primary wide big-btn" onClick={w.openConnect}>
-          Connect wallet
+          Connect to trade
         </button>
       ) : startWithDeposit ? (
         <button className="primary wide big-btn" onClick={() => setDepositing(true)}>
