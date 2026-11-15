@@ -9,7 +9,7 @@ import { ActionButton, Empty, Loading, Pnl, StatusBadge, Term, Tip, useAsync } f
 import { explain } from "../lib/errors";
 import { amount, dateTime, parseInput, pct, relative, signedPct, signedUsd, toInput, usd } from "../lib/format";
 import { EXIT_STEPS, exitDue, exitStage } from "../lib/insuranceExit";
-import { RETURN_WINDOW_SECONDS, type ReturnEstimate, estimateInsuranceReturn, sharePriceOfEvent } from "../lib/insuranceReturn";
+import { RETURN_WINDOW_SECONDS, type ReturnEstimate, estimateInsuranceReturn, returnWindowSeconds, sharePriceOfEvent, windowText } from "../lib/insuranceReturn";
 import { forAccount, insuranceDepositPart, insuranceExecutePart, insuranceRequestPart } from "../lib/jobs";
 import { openInterestNotional } from "../lib/openInterest";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
@@ -32,6 +32,8 @@ interface ReturnInputs {
   readonly sharePriceNow: bigint;
   readonly sharePriceThen: bigint | null;
   readonly complete: boolean;
+  /** What the fees are annualized over: 30 days, or the fund's life when it is younger. */
+  readonly windowSeconds: number;
 }
 
 async function readReturnInputs(bz: Bazaar, pair: Pair): Promise<ReturnInputs> {
@@ -49,9 +51,15 @@ async function readReturnInputs(bz: Bazaar, pair: Pair): Promise<ReturnInputs> {
     after = p.next;
     if (i === TRADE_PAGES - 1) complete = false;
   }
-  const [sharePriceNow, events] = await Promise.all([bz.insurance.getInsuranceSharePrice(pair), bz.history.insuranceEvents({ pair, to: from, order: "desc", first: 20 })]);
+  const [sharePriceNow, events, firstEvent] = await Promise.all([
+    bz.insurance.getInsuranceSharePrice(pair),
+    bz.history.insuranceEvents({ pair, to: from, order: "desc", first: 20 }),
+    // The fund's first event, at the market's listing: a younger fund's fees are annualized over its own life.
+    bz.history.insuranceEvents({ pair, order: "asc", first: 1 }),
+  ]);
   const sharePriceThen = events.items.map(sharePriceOfEvent).find((x) => x !== null) ?? null;
-  return { trades, sharePriceNow, sharePriceThen, complete };
+  const windowSeconds = returnWindowSeconds(now, firstEvent.items[0]?.timestamp ?? null);
+  return { trades, sharePriceNow, sharePriceThen, complete, windowSeconds };
 }
 
 /**
@@ -471,7 +479,7 @@ function FundRow({
           ) : est === null || est.feeApr === null ? (
             "–"
           ) : (
-            <Tip text={`The fund's ${usd(est.insuranceFees)} share of 30 days' fees on ${usd(snap.insurance.freeCapital)}, annualized. Past results, not a promise.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
+            <Tip text={`The fund's ${usd(est.insuranceFees)} share of ${windowText(est.windowSeconds)} on ${usd(snap.insurance.freeCapital)}, annualized. Past results, not a promise.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
               <span className="term">{pct(est.feeApr)}</span>
             </Tip>
           )}
@@ -540,7 +548,10 @@ export function EarnPage() {
       const r = inputs.get(keyOf(m.address));
       const snap = snaps.get(m.address);
       if (r === undefined || !snap) continue;
-      out.set(keyOf(m.address), r && estimateInsuranceReturn({ trades: r.trades, fundValue: snap.insurance.freeCapital, sharePriceNow: r.sharePriceNow, sharePriceThen: r.sharePriceThen, complete: r.complete }));
+      out.set(
+        keyOf(m.address),
+        r && estimateInsuranceReturn({ trades: r.trades, fundValue: snap.insurance.freeCapital, windowSeconds: r.windowSeconds, sharePriceNow: r.sharePriceNow, sharePriceThen: r.sharePriceThen, complete: r.complete }),
+      );
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -660,7 +671,7 @@ export function EarnPage() {
                     <Term t="budget">Withdrawal budget</Term>
                   </th>
                   <th {...th("return", "num")}>
-                    <Tip text="The fund's share of the last 30 days of fees over its value, annualized. Past performance, not a promise.">
+                    <Tip text="The fund's share of the last 30 days of fees (since listing, for a market younger than that) over its value, annualized. Past performance, not a promise.">
                       <span className="term">Est. yearly return</span>
                     </Tip>
                   </th>

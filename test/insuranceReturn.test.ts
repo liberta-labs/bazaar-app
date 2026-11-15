@@ -1,7 +1,7 @@
 import { previews, ZERO_ADDRESS } from "@liberta-labs/bazaar-sdk";
 import type { Address } from "viem";
 import { describe, expect, it } from "vitest";
-import { RETURN_WINDOW_SECONDS, estimateInsuranceReturn, insuranceFeeOf, sharePriceOfEvent } from "../src/lib/insuranceReturn";
+import { MIN_RETURN_WINDOW_SECONDS, RETURN_WINDOW_SECONDS, estimateInsuranceReturn, insuranceFeeOf, returnWindowSeconds, sharePriceOfEvent, windowText } from "../src/lib/insuranceReturn";
 
 const E18 = 10n ** 18n;
 const FRONTEND = "0x00000000000000000000000000000000000001e7" as Address;
@@ -85,5 +85,34 @@ describe("sharePriceOfEvent", () => {
   it("has none for events that move no money", () => {
     expect(sharePriceOfEvent({ kind: "WithdrawalRequested", amount: 0n, shares: 10n * E18 })).toBeNull();
     expect(sharePriceOfEvent({ kind: "LevyCharged", amount: 0n, shares: E18 })).toBeNull();
+  });
+});
+
+describe("returnWindowSeconds", () => {
+  const DAY = 86_400;
+  const now = 20_000 * DAY;
+
+  it("is the trailing 30 days for a fund older than that, or one whose start isn't known", () => {
+    expect(returnWindowSeconds(now, now - 90 * DAY)).toBe(RETURN_WINDOW_SECONDS);
+    expect(returnWindowSeconds(now, null)).toBe(RETURN_WINDOW_SECONDS);
+  });
+
+  it("is a younger fund's whole life, so its fees aren't spread over days before it was listed", () => {
+    expect(returnWindowSeconds(now, now - 4 * DAY)).toBe(4 * DAY);
+    // $9.90 to a $1,000 fund in its 4 days: about 90% a year, where spreading it over 30 days showed 12%.
+    const trades = Array.from({ length: 10 }, () => fill(10_000n * E18, 25n, 75n));
+    const young = estimateInsuranceReturn({ trades, fundValue: 1_000n * E18, windowSeconds: returnWindowSeconds(now, now - 4 * DAY) });
+    expect(young.feeApr).toBeCloseTo(0.0099 * (365 / 4), 10);
+    expect(estimateInsuranceReturn({ trades, fundValue: 1_000n * E18 }).feeApr).toBeCloseTo(0.0099 * (365 / 30), 10);
+  });
+
+  it("is at least a day, so an hour's fees aren't multiplied by 8,760", () => {
+    expect(returnWindowSeconds(now, now - 3_600)).toBe(MIN_RETURN_WINDOW_SECONDS);
+  });
+
+  it("names the window in the tooltip", () => {
+    expect(windowText(RETURN_WINDOW_SECONDS)).toBe("30 days' fees");
+    expect(windowText(4 * DAY)).toBe("the 4 days' fees since listing");
+    expect(windowText(MIN_RETURN_WINDOW_SECONDS)).toBe("the day's fees since listing");
   });
 });

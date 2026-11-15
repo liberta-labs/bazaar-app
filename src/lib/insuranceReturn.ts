@@ -12,7 +12,27 @@ import { EBP_SCALE, previews, ZERO_ADDRESS } from "@liberta-labs/bazaar-sdk";
 import type { Address } from "viem";
 
 export const RETURN_WINDOW_SECONDS = 30 * 86_400;
+/** The shortest window a yield is annualized over: a market listed an hour ago doesn't multiply an hour's fees by 8,760. */
+export const MIN_RETURN_WINDOW_SECONDS = 86_400;
 const YEAR_SECONDS = 365 * 86_400;
+
+/**
+ * The window a fund's yield is measured over: the trailing 30 days, or the fund's whole life when it is
+ * younger (from its first insurance event, the deposit made when the market was listed), so a new
+ * market's fees aren't spread over days before it existed. At least a day; the full 30 days when the
+ * fund's start isn't known.
+ */
+export function returnWindowSeconds(now: number, fundStartedAt: number | null, window: number = RETURN_WINDOW_SECONDS): number {
+  if (fundStartedAt === null) return window;
+  return Math.min(window, Math.max(MIN_RETURN_WINDOW_SECONDS, now - fundStartedAt));
+}
+
+/** Whose fees a yield was worked from, for its tooltip: "30 days' fees", or "the 4 days' fees since listing". */
+export function windowText(seconds: number): string {
+  const days = Math.max(1, Math.round(seconds / 86_400));
+  if (seconds >= RETURN_WINDOW_SECONDS) return `${days} days' fees`;
+  return days === 1 ? "the day's fees since listing" : `the ${days} days' fees since listing`;
+}
 
 /** The parts of a subgraph Trade the estimate reads. */
 export interface FeeTrade {
