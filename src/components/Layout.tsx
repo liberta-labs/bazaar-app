@@ -211,12 +211,11 @@ function StatusBar() {
           ◇ {block.toLocaleString()}
         </span>
       )}
-      {/* Logo.dev's free plan asks a commercial site that shows its logos to link to it. */}
-      <a className="status-link" href="https://logo.dev" target="_blank" rel="noopener noreferrer">
-        Logos provided by Logo.dev
-      </a>
       <a className="status-link" href="https://docs.bazaar.finance/" target="_blank" rel="noopener noreferrer">
         Docs ↗
+      </a>
+      <a className="status-link" href="https://github.com/liberta-labs/bazaar-app" target="_blank" rel="noopener noreferrer">
+        GitHub ↗
       </a>
     </footer>
   );

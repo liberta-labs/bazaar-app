@@ -79,7 +79,7 @@ jobs:
         id: commit
         working-directory: bazaar-app
         run: |
-          git add -A -- public src/lib/stockLogoFiles.ts
+          git add -A -- public src/lib/stockLogoFiles.ts scripts/logo-misses.json
           if git diff --cached --quiet; then
             echo "No new logos."
             echo "changed=false" >> "$GITHUB_OUTPUT"

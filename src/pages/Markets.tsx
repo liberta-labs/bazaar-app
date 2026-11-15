@@ -243,6 +243,13 @@ export function MarketsPage() {
       <p className="small muted" style={{ marginTop: 12 }}>
         Prices refresh every 10 seconds from Pyth Pro. 24-hour change is measured against Pyth's price 24 hours earlier. {history.CANDLE_INTERVALS.length ? "24-hour volume comes from fills, so a quiet market shows none." : ""}
       </p>
+      {/* Logo.dev's free plan asks a commercial site that shows its logos to link to it, where the logos appear. */}
+      <p className="small muted" style={{ marginTop: 4 }}>
+        Logos provided by{" "}
+        <a href="https://logo.dev" target="_blank" rel="noopener noreferrer">
+          Logo.dev
+        </a>
+      </p>
     </>
   );
 }

@@ -14,11 +14,11 @@
  * ticker Logo.dev doesn't know. The free plan includes $5 of credits a month, about 250 logos. When they run
  * out Logo.dev answers 402: the script stops there and keeps what it has, so run it again next month.
  * Logo.dev's terms let every plan store and serve the files its API returns (not copies of its CDN images);
- * on the free plan a commercial site must link to logo.dev, which the app's footer does.
+ * on the free plan a commercial site must link to logo.dev, which the Markets page does under its table.
  *
  * Run through vite-node (the npm script does), so it reads the app's own network settings and ticker parsing.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { Bazaar } from "@liberta-labs/bazaar-sdk";
 import { RPC_URL } from "../src/config/env.ts";
 import { ACTIVE } from "../src/config/networks.ts";
@@ -28,6 +28,12 @@ import { STOCK_LOGO_FILES } from "../src/lib/stockLogoFiles.ts";
 const KEY_FILE = ".env.logodev.local";
 const OUT_DIR = "public/stock-logos";
 const MANIFEST = "src/lib/stockLogoFiles.ts";
+/**
+ * Tickers Logo.dev had no logo for, with the day each was last asked for: one isn't asked for again for
+ * 30 days, since a known company with no logo still costs credits. Naming it on the command line asks anyway.
+ */
+const MISSES = "scripts/logo-misses.json";
+const RETRY_DAYS = 30;
 /** Pixels. The largest market icon is 24px, so this stays sharp at 4x. */
 const SIZE = 96;
 const TICKER = /^[A-Z0-9][A-Z0-9.-]{0,11}$/;
@@ -122,13 +128,16 @@ async function main() {
   const named = args.filter((a) => !a.startsWith("--")).map((a) => a.toUpperCase());
   const key = dry ? "" : secretKey();
   const files = { ...STOCK_LOGO_FILES };
+  const misses = JSON.parse(await readFile(MISSES, "utf8").catch(() => "{}"));
+  const today = new Date().toISOString().slice(0, 10);
+  const recentlyMissed = (t) => misses[t] && Date.parse(today) - Date.parse(misses[t]) < RETRY_DAYS * 86_400_000;
 
   let queue;
   if (named.length) queue = named;
   else {
     const listed = await listedStocks();
     console.log(`${listed.length} stock markets listed on ${ACTIVE.name}.`);
-    queue = [...listed, ...(all ? await pythUsStocks() : [])].filter((t) => !files[t]);
+    queue = [...listed, ...(all ? await pythUsStocks() : [])].filter((t) => !files[t] && !recentlyMissed(t));
   }
   queue = [...new Set(queue)].filter((t) => TICKER.test(t));
   if (!queue.length) return console.log("Every stock in scope already has a logo.");
@@ -148,9 +157,12 @@ async function main() {
         console.log("Out of Logo.dev credits for this month. Run it again when they renew; it carries on from here.");
         break;
       }
-      if (got === "missing") missing.push(ticker);
-      else if (got === "indexing") indexing.push(ticker);
+      if (got === "missing") {
+        missing.push(ticker);
+        misses[ticker] = today;
+      } else if (got === "indexing") indexing.push(ticker);
       else {
+        delete misses[ticker];
         await writeFile(`${OUT_DIR}/${ticker}.webp`, got.bytes);
         files[ticker] = { etag: got.etag, transparent: got.transparent };
         saved++;
@@ -160,6 +172,10 @@ async function main() {
     }
   } finally {
     if (saved) await writeFile(MANIFEST, manifestSource(files));
+    if (saved || missing.length) {
+      const sorted = Object.fromEntries(Object.entries(misses).sort(([a], [b]) => a.localeCompare(b)));
+      await writeFile(MISSES, `${JSON.stringify(sorted, null, 2)}\n`);
+    }
     console.log(`Saved ${saved} logos (${Object.keys(files).length} in all).`);
     if (missing.length) console.log(`No logo on Logo.dev: ${missing.join(" ")}`);
     if (indexing.length) console.log(`Still being indexed, try again later: ${indexing.join(" ")}`);
