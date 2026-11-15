@@ -7,7 +7,7 @@ import { Modal } from "../components/Modal";
 import { StarButton } from "../components/StarButton";
 import { ActionButton, Empty, Loading, Pnl, StatusBadge, Term, Tip, useAsync } from "../components/ui";
 import { explain } from "../lib/errors";
-import { amount, dateTime, parseInput, pct, relative, signedPct, signedUsd, toInput, usd } from "../lib/format";
+import { amount, dateTime, parseInput, pct, relative, shortDate, signedPct, signedUsd, toInput, usd } from "../lib/format";
 import { EXIT_STEPS, exitDue, exitStage } from "../lib/insuranceExit";
 import { RETURN_WINDOW_SECONDS, type ReturnEstimate, estimateInsuranceReturn, returnWindowSeconds, sharePriceOfEvent, windowText } from "../lib/insuranceReturn";
 import { forAccount, insuranceDepositPart, insuranceExecutePart, insuranceRequestPart } from "../lib/jobs";
@@ -31,6 +31,8 @@ interface ReturnInputs {
   readonly trades: readonly history.Trade[];
   readonly sharePriceNow: bigint;
   readonly sharePriceThen: bigint | null;
+  /** When sharePriceThen was the price (unix seconds); null without one. */
+  readonly sharePriceSince: number | null;
   readonly complete: boolean;
   /** What the fees are annualized over: 30 days, or the fund's life when it is younger. */
   readonly windowSeconds: number;
@@ -57,9 +59,11 @@ async function readReturnInputs(bz: Bazaar, pair: Pair): Promise<ReturnInputs> {
     // The fund's first event, at the market's listing: a younger fund's fees are annualized over its own life.
     bz.history.insuranceEvents({ pair, order: "asc", first: 1 }),
   ]);
-  const sharePriceThen = events.items.map(sharePriceOfEvent).find((x) => x !== null) ?? null;
+  // The share price to measure against: the last deposit or withdrawal before the window, or for a fund
+  // younger than the window, the deposit made when the market was listed.
+  const priced = [...events.items, ...firstEvent.items].map((e) => ({ at: e.timestamp, price: sharePriceOfEvent(e) })).find((x) => x.price !== null);
   const windowSeconds = returnWindowSeconds(now, firstEvent.items[0]?.timestamp ?? null);
-  return { trades, sharePriceNow, sharePriceThen, complete, windowSeconds };
+  return { trades, sharePriceNow, sharePriceThen: priced?.price ?? null, sharePriceSince: priced?.at ?? null, complete, windowSeconds };
 }
 
 /**
@@ -479,13 +483,29 @@ function FundRow({
           ) : est === null || est.feeApr === null ? (
             "–"
           ) : (
-            <Tip text={`The fund's ${usd(est.insuranceFees)} share of ${windowText(est.windowSeconds)} on ${usd(snap.insurance.freeCapital)}, annualized. Past results, not a promise.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
-              <span className="term">{pct(est.feeApr)}</span>
-            </Tip>
+            <>
+              <Tip text={`Fees: the fund's ${usd(est.insuranceFees)} share of ${windowText(est.windowSeconds)} on ${usd(snap.insurance.freeCapital)}, annualized. Past results, not a promise.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
+                <span className="term">{pct(est.feeApr)}</span>
+              </Tip>
+              {est.netApr !== null && est.sharePriceSince !== null && (
+                <div className="small">
+                  <Tip text={`Net: the share price's change since ${shortDate(est.sharePriceSince)}, annualized. Fees less what the fund paid out, such as a liquidation's shortfall, and levies.`}>
+                    <span className={`term ${est.netApr < 0 ? "down" : "muted"}`}>net {pct(est.netApr)}</span>
+                  </Tip>
+                </div>
+              )}
+            </>
           )}
         </td>
-        <td data-label="Share price, 30 days" className={`num hide-sm ${est?.sharePriceChange && est.sharePriceChange < 0 ? "down" : ""}`}>
-          {est ? signedPct(est.sharePriceChange) : "–"}
+        <td data-label="Share price change" className={`num hide-sm ${est?.sharePriceChange && est.sharePriceChange < 0 ? "down" : ""}`}>
+          {est && est.sharePriceSince !== null ? (
+            <Tip text={`Since ${shortDate(est.sharePriceSince)}`}>
+              {/* A third decimal for a change under 0.05%, so a small loss doesn't read as -0.00%. */}
+              <span>{signedPct(est.sharePriceChange, est.sharePriceChange !== null && est.sharePriceChange !== 0 && Math.abs(est.sharePriceChange) < 0.0005 ? 3 : 2)}</span>
+            </Tip>
+          ) : (
+            "–"
+          )}
         </td>
         {stakeColumn && (
           <td data-label="Your stake" className={`num${provider ? "" : " no-stake"}`}>
@@ -550,7 +570,7 @@ export function EarnPage() {
       if (r === undefined || !snap) continue;
       out.set(
         keyOf(m.address),
-        r && estimateInsuranceReturn({ trades: r.trades, fundValue: snap.insurance.freeCapital, windowSeconds: r.windowSeconds, sharePriceNow: r.sharePriceNow, sharePriceThen: r.sharePriceThen, complete: r.complete }),
+        r && estimateInsuranceReturn({ trades: r.trades, fundValue: snap.insurance.freeCapital, windowSeconds: r.windowSeconds, sharePriceNow: r.sharePriceNow, sharePriceThen: r.sharePriceThen, sharePriceSince: r.sharePriceSince, complete: r.complete }),
       );
     }
     return out;
@@ -671,11 +691,15 @@ export function EarnPage() {
                     <Term t="budget">Withdrawal budget</Term>
                   </th>
                   <th {...th("return", "num")}>
-                    <Tip text="The fund's share of the last 30 days of fees (since listing, for a market younger than that) over its value, annualized. Past performance, not a promise.">
+                    <Tip text="The fund's share of the last 30 days of fees (since listing, for a market younger than that) over its value, annualized. Under it, net: the share price's change annualized, which also takes off what the fund paid out. Past performance, not a promise.">
                       <span className="term">Est. yearly return</span>
                     </Tip>
                   </th>
-                  <th {...th("sharePrice", "num hide-sm")}>Share price, 30 days</th>
+                  <th {...th("sharePrice", "num hide-sm")}>
+                    <Tip text="The fund's share price now against the last deposit or withdrawal before the last 30 days, or the deposit at listing for a younger fund. Deposits and withdrawals don't move it: fees raise it, payouts lower it.">
+                      <span className="term">Share price change</span>
+                    </Tip>
+                  </th>
                   {stakeColumn && <th {...th("stake", "num")}>Your stake</th>}
                   <th></th>
                   <th className="star-col">

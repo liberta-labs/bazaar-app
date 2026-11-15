@@ -88,6 +88,30 @@ describe("sharePriceOfEvent", () => {
   });
 });
 
+describe("net return", () => {
+  const DAY = 86_400;
+  const now = 20_000 * DAY;
+
+  it("annualizes the share price's change over the time it covers: fees less what the fund paid out", () => {
+    // +1% in 10 days: 36.5% a year.
+    const up = estimateInsuranceReturn({ trades: [], fundValue: E18, sharePriceThen: E18, sharePriceNow: (101n * E18) / 100n, sharePriceSince: now - 10 * DAY, now });
+    expect(up.sharePriceSince).toBe(now - 10 * DAY);
+    expect(up.netApr).toBeCloseTo(0.01 * 36.5, 10);
+    // A fund that earned fees but paid out more: the fee yield stays positive, the net goes negative.
+    const trades = Array.from({ length: 10 }, () => fill(10_000n * E18, 25n, 75n));
+    const down = estimateInsuranceReturn({ trades, fundValue: 1_000n * E18, windowSeconds: 10 * DAY, sharePriceThen: E18, sharePriceNow: (99n * E18) / 100n, sharePriceSince: now - 10 * DAY, now });
+    expect(down.feeApr).toBeGreaterThan(0);
+    expect(down.netApr).toBeCloseTo(-0.01 * 36.5, 10);
+  });
+
+  it("covers at least a day, and has none without a share price then", () => {
+    const young = estimateInsuranceReturn({ trades: [], fundValue: E18, sharePriceThen: E18, sharePriceNow: (1001n * E18) / 1000n, sharePriceSince: now - 3_600, now });
+    expect(young.netApr).toBeCloseTo(0.001 * 365, 10);
+    const none = estimateInsuranceReturn({ trades: [], fundValue: E18, sharePriceThen: null, sharePriceNow: E18, sharePriceSince: now - DAY, now });
+    expect([none.netApr, none.sharePriceSince]).toEqual([null, null]);
+  });
+});
+
 describe("returnWindowSeconds", () => {
   const DAY = 86_400;
   const now = 20_000 * DAY;

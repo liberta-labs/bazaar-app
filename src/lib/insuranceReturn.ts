@@ -1,7 +1,8 @@
 /**
  * An estimated return for insuring a market: the insurance fund's share of the trailing window's
- * trading fees over the fund's value, annualized. Past performance only: liquidation losses beyond
- * maintenance margin come out of the same fund and can lower the share price.
+ * trading fees over the fund's value, annualized; and the net return, the share price's change annualized,
+ * which also counts what the fund paid out (liquidation losses beyond maintenance margin, ADL) and
+ * levies. Past performance only.
  *
  * The subgraph's fee figures carry both legs of each fill's fee (insurance and integrator), and the
  * pair skims 1% of each leg to the bug bounty (protocol/fees.md). Only what reaches the fund counts:
@@ -64,8 +65,15 @@ export interface ReturnEstimate {
   readonly insuranceFees: bigint;
   /** Annualized fee yield on the fund's value (0.12 = 12% a year); null when the fund is empty. */
   readonly feeApr: number | null;
-  /** The share price's change over the window (0.01 = +1%); null without both prices. */
+  /** The share price's change since `sharePriceSince` (0.01 = +1%); null without both prices. */
   readonly sharePriceChange: number | null;
+  /** When the share price was measured from (unix seconds); null without a price then. */
+  readonly sharePriceSince: number | null;
+  /**
+   * The share price's change annualized over the time it covers: the net return, fees less whatever the
+   * fund paid out (liquidation shortfalls, ADL) and levies. Null without a share price then.
+   */
+  readonly netApr: number | null;
   /** The window actually covered, in seconds. */
   readonly windowSeconds: number;
   /** False when not every fill in the window could be read: the yield is then a lower bound. */
@@ -85,7 +93,11 @@ export function estimateInsuranceReturn(args: {
   readonly windowSeconds?: number;
   readonly sharePriceNow?: bigint | null;
   readonly sharePriceThen?: bigint | null;
+  /** When sharePriceThen was the price (unix seconds). */
+  readonly sharePriceSince?: number | null;
   readonly complete?: boolean;
+  /** Unix seconds; now unless given. */
+  readonly now?: number;
 }): ReturnEstimate {
   const windowSeconds = args.windowSeconds ?? RETURN_WINDOW_SECONDS;
   const insuranceFees = args.trades.reduce((s, t) => s + insuranceFeeOf(t), 0n);
@@ -93,7 +105,11 @@ export function estimateInsuranceReturn(args: {
   const now = args.sharePriceNow ?? null;
   const then = args.sharePriceThen ?? null;
   const sharePriceChange = now !== null && then !== null && then > 0n ? ratio(now - then, then) : null;
-  return { insuranceFees, feeApr, sharePriceChange, windowSeconds, complete: args.complete ?? true };
+  const sharePriceSince = sharePriceChange === null ? null : (args.sharePriceSince ?? null);
+  // Over the time the change covers, at least a day, as the fee yield.
+  const covered = sharePriceSince === null ? null : Math.max(MIN_RETURN_WINDOW_SECONDS, (args.now ?? Date.now() / 1000) - sharePriceSince);
+  const netApr = sharePriceChange === null || covered === null ? null : sharePriceChange * (YEAR_SECONDS / covered);
+  return { insuranceFees, feeApr, sharePriceChange, sharePriceSince, netApr, windowSeconds, complete: args.complete ?? true };
 }
 
 /** The share price an insurance event implies: USD moved per share. Null for events that move no USD. */
