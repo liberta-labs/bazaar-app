@@ -1,8 +1,10 @@
 /**
- * Company logos for stock markets, by ticker: each brand's mark from simple-icons (CC0), one SVG path on a
- * 24×24 grid, with its brand colour. Its own chunk, loaded the first time a stock icon is drawn. A ticker
- * missing here keeps the generic tile (components/AssetIcon.tsx).
+ * Company logos for stock markets, by ticker, in one chunk loaded the first time a stock icon is drawn
+ * (components/AssetIcon.tsx): the logos downloaded from Logo.dev (stockLogoFiles.ts) first, then each
+ * brand's mark from simple-icons (CC0), one SVG path on a 24×24 grid with its brand colour. A ticker in
+ * neither keeps the generic tile.
  */
+export { STOCK_LOGO_FILES, type StockLogoFile } from "./stockLogoFiles";
 import { siAirbnb, siAlibabadotcom, siAmd, siAmericanexpress, siApple, siArm, siAtandt, siAtlassian, siBaidu, siBoeing, siBookingdotcom, siBroadcom, siCisco, siCloudflare, siCocacola, siCoinbase, siDatadog, siDell, siDoordash, siDuolingo, siEa, siEbay, siEricsson, siEtsy, siExpedia, siFord, siFortinet, siGeneralmotors, siGoogle, siHilton, siHp, siIntel, siIntuit, siLyft, siMarriott, siMastercard, siMcdonalds, siMeta, siMicrostrategy, siMongodb, siNetflix, siNike, siNokia, siNvidia, siOkta, siPalantir, siPaloaltonetworks, siPaypal, siPinterest, siQualcomm, siReddit, siRobinhood, siRoblox, siSap, siShopify, siSnapchat, siSnowflake, siSony, siSpotify, siStarbucks, siSupermicro, siTesla, siToyota, siUber, siUnity, siVerizon, siVisa, siZoom } from "simple-icons";
 
 export interface StockLogo {

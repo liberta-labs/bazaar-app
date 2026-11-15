@@ -22,11 +22,25 @@ Every chain read, transaction, signature and history query goes through `@libert
 
 ## Running it
 
-Node 20 or later. Until the SDK is on npm, it is installed from a sibling checkout:
+Node 20 or later. Until the SDK is on npm, the app takes it from a checkout of
+[bazaar-sdk](https://github.com/liberta-labs/bazaar-sdk) in the folder beside it
+(`file:../bazaar-sdk/packages/sdk` in `package.json`), so clone both side by side:
 
 ```bash
-cd ../bazaar-sdk/packages/sdk && npx tsc -b && cd -
+git clone https://github.com/liberta-labs/bazaar-sdk.git
 ```
+
+```bash
+git clone https://github.com/liberta-labs/bazaar-app.git
+```
+
+Build the SDK once, and again after pulling SDK changes:
+
+```bash
+cd bazaar-sdk && npm ci --ignore-scripts && npx tsc -b packages/sdk && cd ..
+```
+
+Then, in `bazaar-app`:
 
 ```bash
 npm install
@@ -100,8 +114,8 @@ need:
 
 Nothing else: no server, no database, no API key.
 
-**The whole stack.** Run the service yourself as well, from
-[bazaar-relayer-priceboard](https://github.com/liberta-labs/bazaar-relayer-priceboard): one container,
+**The whole stack.** Run the service yourself as well. Its repository, `bazaar-relayer-priceboard`, is
+not public yet; until it is, run the frontend alone against the deployed service. It is one container,
 configured by environment variables (its `.env.example` lists them), with a `Dockerfile` and a `fly.toml`
 ready for Fly.io. It needs:
 
@@ -166,7 +180,7 @@ npm run build && npm run e2e
 | Where | What |
 |---|---|
 | `src/config/networks.ts` | The networks. Arbitrum Sepolia is on; Arbitrum One is one entry, enabled by adding its chain id to `ENABLED_CHAINS` once its SDK preset has a factory. The Testnet badge and the faucet follow `testnet`. |
-| `src/state/appkit.ts` | Reown AppKit: EIP-6963 extension wallets (MetaMask first) and WalletConnect; email, socials, swaps and on-ramp off; Coinbase limited to its ordinary (EOA) wallet. |
+| `src/state/appkit.ts` | Reown AppKit: EIP-6963 extension wallets (MetaMask first), WalletConnect, and email and social logins (as ordinary EOA accounts); swaps and on-ramp off; Coinbase limited to its ordinary (EOA) wallet. |
 | `src/state/connection.tsx` | The read-only connection over the RPC URL, the wallet's connection (its EIP-1193 provider passed to `Bazaar.connect` and as `wallet` for signing and sending), chain switching, the smart-wallet check, and the board, polled every 10 seconds. |
 | `src/lib/board.ts` | `/board.json` parsed into 18-decimal bigints, and `BoardPrices`, the SDK's `LivePriceView` over it. Passed as `prices` to every read that takes it. It also carries each market's price 24 hours ago, its 24-hour volume and the subgraph's lag, so the page asks the subgraph for none of them. |
 | `src/lib/subgraph.ts` | Where history comes from: the service's `/subgraph/<chainId>` route, given to `Bazaar.connect` as its subgraph, with the public subgraph as the fallback. |
@@ -195,3 +209,15 @@ With the service running locally and `.env` filled in, each of these should then
    page or the Portfolio).
 4. Open a position with a market order, then close it (Close in the position row).
 5. On Earn, insure a market, then request a withdrawal in "My insurance".
+
+## License
+
+The code is [MIT](LICENSE), like the [SDK](https://github.com/liberta-labs/bazaar-sdk). The license does
+not grant use of the Bazaar name or logos (`public/bazaar-*.png`); a copy you host should use its own.
+Nor does it cover the company logos in `public/stock-logos/`: they belong to their companies and are
+downloaded from [Logo.dev](https://www.logo.dev) under its terms (`npm run logos`, run daily by the
+Stock logos workflow). A copy you host should download its own with its own Logo.dev key.
+
+Dependencies keep their own licenses. Two that ship in the built site are not open source: Reown AppKit
+(wallet connection, under the Reown Community License) and the MetaMask SDK (under ConsenSys's terms). A
+copy you host uses them under those vendors' terms, not this repository's.

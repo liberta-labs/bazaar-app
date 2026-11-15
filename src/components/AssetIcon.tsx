@@ -1,38 +1,53 @@
 /**
- * A market's icon: the coin's own logo for crypto (from the CC0 cryptocurrency-icons set, each file
- * loaded only when shown), the company's logo for a stock simple-icons (CC0) has one for, on a tile of
- * its brand colour, and a generic symbol for other stocks, FX, metals, energy, other commodities and
- * rates, on a tinted tile. Unknown assets show the ticker's first letter. Decorative: the market's name
- * is always shown beside it.
+ * A market's icon: the coin's own logo for crypto (from the MIT web3icons set, each file loaded only when
+ * shown), the company's logo for a stock simple-icons (CC0) has one for, on a tile of its brand colour,
+ * and a generic symbol for other stocks, FX, metals, energy, other commodities and rates, on a tinted
+ * tile. Unknown assets, and coins the set lacks, show the ticker's first letter. Decorative: the market's
+ * name is always shown beside it.
  */
 import type { markets } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useState } from "react";
 import { type AssetIconSpec, assetIconSpec, currencySign, logoColors, metalTone } from "../lib/assetIcon";
-import type { StockLogo } from "../lib/stockLogoData";
+import type { StockLogo, StockLogoFile } from "../lib/stockLogoData";
+
+interface StockLogos {
+  /** Logo.dev's logos, downloaded into public/stock-logos by scripts/fetch-stock-logos.mjs. */
+  readonly files: Readonly<Record<string, StockLogoFile>>;
+  /** simple-icons' marks. */
+  readonly marks: Readonly<Record<string, StockLogo>>;
+}
 
 // The company logos, one chunk loaded the first time a stock icon is drawn.
-let stockLogos: Promise<Readonly<Record<string, StockLogo>>> | null = null;
+let stockLogos: Promise<StockLogos> | null = null;
 // Once loaded, kept here too, so an icon drawn later starts with its logo instead of a flash of the tile.
-let stockLogosLoaded: Readonly<Record<string, StockLogo>> | null = null;
-const loadStockLogos = () =>
-  (stockLogos ??= import("../lib/stockLogoData").then((m) => {
-    stockLogosLoaded = m.STOCK_LOGOS;
-    return m.STOCK_LOGOS;
-  }));
+let stockLogosLoaded: StockLogos | null = null;
+const loadStockLogos = () => (stockLogos ??= import("../lib/stockLogoData").then((m) => (stockLogosLoaded = { files: m.STOCK_LOGO_FILES, marks: m.STOCK_LOGOS })));
 
-/** A stock's company logo on a tile of its brand colour; the generic tile until it loads, or for good without one. */
+/**
+ * A stock's company logo: Logo.dev's when one was downloaded, else simple-icons' mark on a tile of its brand
+ * colour; the generic tile until they load, or for good without either.
+ */
 function StockImage({ ticker, size, fallback }: { ticker: string; size: number; fallback: React.ReactNode }) {
-  const [logo, setLogo] = useState<StockLogo | null>(() => stockLogosLoaded?.[ticker] ?? null);
+  const [all, setAll] = useState<StockLogos | null>(stockLogosLoaded);
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
+    if (all) return;
     let dead = false;
     loadStockLogos().then(
-      (all) => !dead && setLogo(all[ticker] ?? null),
+      (l) => !dead && setAll(l),
       () => undefined,
     );
     return () => {
       dead = true;
     };
-  }, [ticker]);
+  }, [all]);
+  const file = all && Object.hasOwn(all.files, ticker) ? all.files[ticker] : undefined;
+  if (file && failed !== ticker) {
+    // The etag in the address, so a logo Logo.dev has updated isn't served from an old cached copy.
+    const src = `${import.meta.env.BASE_URL}stock-logos/${ticker}.webp?v=${encodeURIComponent(file.etag)}`;
+    return <img className={`asset-icon asset-stock-logo${file.transparent ? " on-tile" : ""}`} src={src} width={size} height={size} alt="" aria-hidden="true" onError={() => setFailed(ticker)} />;
+  }
+  const logo = all && Object.hasOwn(all.marks, ticker) ? all.marks[ticker] : undefined;
   if (!logo) return <>{fallback}</>;
   const c = logoColors(logo.hex);
   return (
@@ -44,34 +59,38 @@ function StockImage({ ticker, size, fallback }: { ticker: string; size: number; 
   );
 }
 
-// Each coin's SVG as a lazily loaded URL, keyed by its lower-case ticker.
-const COIN_URLS: Record<string, () => Promise<string>> = Object.fromEntries(
-  Object.entries(import.meta.glob<string>("/node_modules/cryptocurrency-icons/svg/color/*.svg", { query: "?url", import: "default" })).map(([path, load]) => [
-    path.slice(path.lastIndexOf("/") + 1, -4),
-    load,
-  ]),
-);
+// The coin icon index (lib/coinIcons.ts), one chunk loaded the first time a coin or unknown asset is drawn.
+let coinIcons: Promise<typeof import("../lib/coinIcons")> | null = null;
+const loadCoinIcons = () => (coinIcons ??= import("../lib/coinIcons"));
+// Icons already loaded, as data: URLs, so an icon drawn again starts with its logo instead of a flash of the tile.
+const coinUrls = new Map<string, string>();
 
-/** Whether the icon set has this coin. */
-export const hasCoinIcon = (ticker: string) => ticker.toLowerCase() in COIN_URLS;
-
+/** A coin's logo; the fallback until it loads, or for good when the set lacks the coin. */
 function CoinImage({ ticker, size, fallback }: { ticker: string; size: number; fallback: React.ReactNode }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  const key = ticker.toUpperCase();
+  const [, setLoaded] = useState(0);
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
-    const load = COIN_URLS[ticker.toLowerCase()];
-    if (!load) return;
+    if (coinUrls.has(key)) return;
     let dead = false;
-    load().then(
-      (u) => !dead && setUrl(u),
-      () => !dead && setFailed(true),
-    );
+    loadCoinIcons()
+      .then((m) => m.coinIcon(key)?.())
+      .then(
+        (svg) => {
+          if (svg === undefined) return;
+          // Drawn by an <img>, so the SVG is shown as a picture and nothing in it runs.
+          coinUrls.set(key, `data:image/svg+xml,${encodeURIComponent(svg)}`);
+          if (!dead) setLoaded((n) => n + 1);
+        },
+        () => !dead && setFailed(key),
+      );
     return () => {
       dead = true;
     };
-  }, [ticker]);
-  if (failed || !url) return <>{fallback}</>;
-  return <img className="asset-icon" src={url} width={size} height={size} alt="" aria-hidden="true" onError={() => setFailed(true)} />;
+  }, [key]);
+  const url = coinUrls.get(key);
+  if (failed === key || !url) return <>{fallback}</>;
+  return <img className="asset-icon asset-coin" src={url} width={size} height={size} alt="" aria-hidden="true" onError={() => setFailed(key)} />;
 }
 
 /** The generic symbol for a non-crypto asset, drawn on a 24×24 grid in the tile's ink colour. */
@@ -150,11 +169,10 @@ function Tile({ spec, size }: { spec: AssetIconSpec; size: number }) {
 /** The icon for a market, `size` pixels square. */
 export function AssetIcon({ market, size = 20 }: { market: Pick<markets.MarketInfo, "label" | "legSymbols">; size?: number }) {
   const spec = assetIconSpec(market.legSymbols[0], market.label);
-  // A coin the set knows: its logo. A market whose class is unknown but whose ticker is a known coin
-  // (no Pyth symbol was read) gets the logo too.
-  if (spec.kind === "crypto" || (spec.kind === "unknown" && hasCoinIcon(spec.ticker))) {
-    const fallback = <Tile spec={{ ...spec, kind: "unknown" }} size={size} />;
-    return hasCoinIcon(spec.ticker) ? <CoinImage ticker={spec.ticker} size={size} fallback={fallback} /> : fallback;
+  // A coin the set knows: its logo, else the letter tile. A market whose class is unknown (no Pyth symbol
+  // was read) gets the logo too when its ticker is a known coin.
+  if (spec.kind === "crypto" || spec.kind === "unknown") {
+    return <CoinImage ticker={spec.ticker} size={size} fallback={<Tile spec={{ ...spec, kind: "unknown" }} size={size} />} />;
   }
   if (spec.kind === "stock") return <StockImage ticker={spec.ticker} size={size} fallback={<Tile spec={spec} size={size} />} />;
   return <Tile spec={spec} size={size} />;

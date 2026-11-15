@@ -1,5 +1,8 @@
+// web3icons' own metadata, which @web3icons/core depends on.
+import { tokens } from "@web3icons/common/metadata/tokens";
 import { describe, expect, it } from "vitest";
 import { assetIconSpec, currencySign, logoColors, metalTone } from "../src/lib/assetIcon";
+import { NETWORK_COINS, coinIcon } from "../src/lib/coinIcons";
 import { STOCK_LOGOS } from "../src/lib/stockLogoData";
 
 describe("assetIconSpec", () => {
@@ -29,6 +32,21 @@ describe("assetIconSpec", () => {
   it("colours metals and signs currencies", () => {
     expect([metalTone("XAU"), metalTone("XAG"), metalTone("XPT"), metalTone("HG")]).toEqual(["gold", "silver", "platinum", "copper"]);
     expect([currencySign("EUR"), currencySign("USD"), currencySign("XYZ"), currencySign(null)]).toEqual(["€", "$", null, null]);
+  });
+});
+
+describe("coin icons", () => {
+  it("knows the coins web3icons draws, in any case, and not the ones it lacks", async () => {
+    for (const ticker of ["BTC", "doge", "SOL", "TON", "HYPE"]) expect(coinIcon(ticker), ticker).toBeTypeOf("function");
+    expect(await coinIcon("btc")!()).toMatch(/^<svg[^>]*viewBox="0 0 24 24"/);
+    expect(coinIcon("MOODENG")).toBeUndefined();
+    expect(coinIcon("constructor")).toBeUndefined();
+  });
+
+  it("maps every coin web3icons draws with its network's icon, and loads it", async () => {
+    const drawnAsNetwork = tokens.filter((t) => t.filePath.startsWith("network:")).map((t) => t.symbol.toUpperCase());
+    expect(Object.keys(NETWORK_COINS).sort()).toEqual(drawnAsNetwork.sort());
+    expect(await NETWORK_COINS.TON!()).toMatch(/^<svg/);
   });
 });
 

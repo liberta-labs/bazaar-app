@@ -534,6 +534,7 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 }
 .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .status-link { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.status-link + .status-link { margin-left: 16px; }
 .status-link:hover { color: var(--text); }
 .dot-s { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--muted); }
 .dot-s.ok { background: var(--up); }
@@ -602,6 +603,12 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
 /* Market icons: a coin's logo, or a generic symbol on a tinted tile. White symbols on these tints stay
    readable in both themes. */
 .asset-icon { flex: none; display: inline-block; border-radius: 50%; vertical-align: middle; }
+/* A faint edge, so a coin drawn on white (DOGE, MOG) keeps its circle on the light theme. */
+.asset-coin { outline: 1px solid rgb(0 0 0 / 10%); outline-offset: -1px; }
+/* A company logo from Logo.dev: a rounded square like the other stock tiles. One with a transparent
+   background sits on white, inset a little, so a dark mark stays visible on the dark theme. */
+.asset-stock-logo { border-radius: 6px; object-fit: contain; outline: 1px solid rgb(0 0 0 / 10%); outline-offset: -1px; }
+.asset-stock-logo.on-tile { background: #ffffff; padding: 2px; box-sizing: border-box; }
 .asset-tile { display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: #ffffff; background: #5b6472; }
 .asset-tile svg { width: 72%; height: 72%; }
 .asset-stock { background: #4f46e5; }
