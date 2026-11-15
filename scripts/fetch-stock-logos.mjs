@@ -10,9 +10,10 @@
  * It needs Logo.dev's secret key (sk_…) as LOGO_DEV_SECRET_KEY, in .env.logodev.local (gitignored) or in
  * the environment. The key is sent only to api.logo.dev and never printed.
  *
- * Each logo costs 2 API credits (2¢); looking the same ticker up again within 24 hours is free, and so is a
- * ticker Logo.dev doesn't know. The free plan includes $5 of credits a month, about 250 logos. When they run
- * out Logo.dev answers 402: the script stops there and keeps what it has, so run it again next month.
+ * Each logo costs 2 API credits (2¢), and looking the same ticker up again within 24 hours is free. A ticker
+ * Logo.dev has no logo for can still cost credits, so the script writes it down and waits before asking again
+ * (MISSES below). The free plan includes $5 of credits a month, about 250 logos. When they run out Logo.dev
+ * answers 402: the script stops there and keeps what it has, so run it again next month.
  * Logo.dev's terms let every plan store and serve the files its API returns (not copies of its CDN images);
  * on the free plan a commercial site must link to logo.dev, which the Markets page does under its table.
  *
@@ -29,11 +30,12 @@ const KEY_FILE = ".env.logodev.local";
 const OUT_DIR = "public/stock-logos";
 const MANIFEST = "src/lib/stockLogoFiles.ts";
 /**
- * Tickers Logo.dev had no logo for, with the day each was last asked for: one isn't asked for again for
- * 30 days, since a known company with no logo still costs credits. Naming it on the command line asks anyway.
+ * Tickers Logo.dev had no logo for, with the day to ask for each again: 30 days on for one it has no logo
+ * for, and 7 for one it is still indexing, whose logo should come sooner. Until then the daily run skips it;
+ * naming it on the command line asks anyway.
  */
 const MISSES = "scripts/logo-misses.json";
-const RETRY_DAYS = 30;
+const RETRY_DAYS = { missing: 30, indexing: 7 };
 /** Pixels. The largest market icon is 24px, so this stays sharp at 4x. */
 const SIZE = 96;
 const TICKER = /^[A-Z0-9][A-Z0-9.-]{0,11}$/;
@@ -130,17 +132,19 @@ async function main() {
   const files = { ...STOCK_LOGO_FILES };
   const misses = JSON.parse(await readFile(MISSES, "utf8").catch(() => "{}"));
   const today = new Date().toISOString().slice(0, 10);
-  const recentlyMissed = (t) => misses[t] && Date.parse(today) - Date.parse(misses[t]) < RETRY_DAYS * 86_400_000;
+  const daysOn = (days) => new Date(Date.parse(today) + days * 86_400_000).toISOString().slice(0, 10);
+  // ISO days compare as text.
+  const waiting = (t) => typeof misses[t] === "string" && today < misses[t];
 
   let queue;
   if (named.length) queue = named;
   else {
     const listed = await listedStocks();
     console.log(`${listed.length} stock markets listed on ${ACTIVE.name}.`);
-    queue = [...listed, ...(all ? await pythUsStocks() : [])].filter((t) => !files[t] && !recentlyMissed(t));
+    queue = [...listed, ...(all ? await pythUsStocks() : [])].filter((t) => !files[t] && !waiting(t));
   }
   queue = [...new Set(queue)].filter((t) => TICKER.test(t));
-  if (!queue.length) return console.log("Every stock in scope already has a logo.");
+  if (!queue.length) return console.log("Nothing to look up: every stock in scope has a logo or waits to be asked again.");
   if (dry) return console.log(`Would look up ${queue.length} tickers: ${queue.join(" ")}`);
   console.log(`Looking up ${queue.length} tickers on Logo.dev.`);
 
@@ -159,9 +163,11 @@ async function main() {
       }
       if (got === "missing") {
         missing.push(ticker);
-        misses[ticker] = today;
-      } else if (got === "indexing") indexing.push(ticker);
-      else {
+        misses[ticker] = daysOn(RETRY_DAYS.missing);
+      } else if (got === "indexing") {
+        indexing.push(ticker);
+        misses[ticker] = daysOn(RETRY_DAYS.indexing);
+      } else {
         delete misses[ticker];
         await writeFile(`${OUT_DIR}/${ticker}.webp`, got.bytes);
         files[ticker] = { etag: got.etag, transparent: got.transparent };
@@ -172,13 +178,13 @@ async function main() {
     }
   } finally {
     if (saved) await writeFile(MANIFEST, manifestSource(files));
-    if (saved || missing.length) {
+    if (saved || missing.length || indexing.length) {
       const sorted = Object.fromEntries(Object.entries(misses).sort(([a], [b]) => a.localeCompare(b)));
       await writeFile(MISSES, `${JSON.stringify(sorted, null, 2)}\n`);
     }
     console.log(`Saved ${saved} logos (${Object.keys(files).length} in all).`);
-    if (missing.length) console.log(`No logo on Logo.dev: ${missing.join(" ")}`);
-    if (indexing.length) console.log(`Still being indexed, try again later: ${indexing.join(" ")}`);
+    if (missing.length) console.log(`No logo on Logo.dev, asked again in ${RETRY_DAYS.missing} days: ${missing.join(" ")}`);
+    if (indexing.length) console.log(`Still being indexed, asked again in ${RETRY_DAYS.indexing} days: ${indexing.join(" ")}`);
   }
 }
 
