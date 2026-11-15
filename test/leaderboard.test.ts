@@ -60,8 +60,9 @@ describe("entryOf", () => {
 describe("levelOf", () => {
   it("names the level the points reach, and how far it is to the next", () => {
     expect(levelOf(0)).toMatchObject({ level: { name: "Rookie" }, next: { name: "Explorer" }, toNext: 200, progress: 0 });
-    expect(levelOf(560)).toMatchObject({ level: { name: "Trader" }, next: { name: "Pro" }, toNext: 340, progress: 0.15 });
-    expect(levelOf(900)).toMatchObject({ level: { name: "Pro" }, toNext: 600 });
+    expect(levelOf(560)).toMatchObject({ level: { name: "Trader" }, next: { name: "Pro" }, toNext: 240, progress: 0.2 });
+    // Every badge, and nothing else, reaches Pro.
+    expect(levelOf(BADGES.length * 100)).toMatchObject({ level: { name: "Pro" }, toNext: 700 });
     expect(levelOf(5000)).toMatchObject({ level: { name: "Legend" }, next: null, toNext: 0, progress: 1 });
   });
 });

@@ -26,7 +26,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type { Address } from "viem";
 import { ACTIVE } from "../config/networks";
 import { explain, inputSentence } from "../lib/errors";
-import { amount, ceilDiv, leverage as fmtLev, parseInput, price as fmtPrice, toInput, usd } from "../lib/format";
+import { amount, ceilDiv, leverage as fmtLev, parseInput, price as fmtPrice, priceInput, toInput, usd } from "../lib/format";
 import { depositPart, orderPart } from "../lib/jobs";
 import { GATE_ROOM_BP, MAX_ROOM_BP, maxGateSize, maxOrderSize, orderLev10, takerFeeEbp } from "../lib/maxOrder";
 import { openInterestNotional } from "../lib/openInterest";
@@ -130,8 +130,8 @@ export function OrderTicket({
   useEffect(() => {
     if (!prefill) return;
     if (kind === "market") setKind("limit");
-    if (kind === "stopLimit" || kind === "limit" || kind === "market") setLimitText(toInput(prefill.price, 8));
-    else setTriggerText(toInput(prefill.price, 8));
+    if (kind === "stopLimit" || kind === "limit" || kind === "market") setLimitText(toInput(prefill.price, 18));
+    else setTriggerText(toInput(prefill.price, 18));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill]);
 
@@ -607,7 +607,7 @@ export function OrderTicket({
       {(kind === "stopLimit" || isTpSl) && (
         <div className="input-row">
           <span className="muted">Trigger</span>
-          <input className="num" inputMode="decimal" placeholder={refPrice ? toInput(refPrice, 2) : "0.00"} value={triggerText} onChange={(e) => setTriggerText(e.target.value)} aria-label="Trigger price" />
+          <input className="num" inputMode="decimal" placeholder={refPrice ? priceInput(refPrice) : "0.00"} value={triggerText} onChange={(e) => setTriggerText(e.target.value)} aria-label="Trigger price" />
           <span className="muted small">USD</span>
         </div>
       )}
@@ -615,10 +615,10 @@ export function OrderTicket({
       {(kind === "limit" || kind === "stopLimit") && (
         <div className="input-row">
           <span className="muted">{kind === "stopLimit" ? "Limit" : "Price"}</span>
-          <input className="num" inputMode="decimal" placeholder={refPrice ? toInput(refPrice, 2) : "0.00"} value={limitText} onChange={(e) => setLimitText(e.target.value)} aria-label="Limit price" />
+          <input className="num" inputMode="decimal" placeholder={refPrice ? priceInput(refPrice) : "0.00"} value={limitText} onChange={(e) => setLimitText(e.target.value)} aria-label="Limit price" />
           <span className="muted small">USD</span>
           {markRef !== null && markRef > 0n && (
-            <button className="chip" onClick={() => setLimitText(toInput(markRef, 2))} title="Use the mark price">
+            <button className="chip" onClick={() => setLimitText(priceInput(markRef))} title="Use the mark price">
               Mark
             </button>
           )}

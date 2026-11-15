@@ -600,6 +600,9 @@ select.compact { width: auto; min-height: 28px; padding: 2px 6px; }
   .rtable td[data-actions] button { min-height: 36px; }
 }
 
+/* Pages under a table (components/Pager.tsx). */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
+
 /* Market icons: a coin's logo, or a generic symbol on a tinted tile. White symbols on these tints stay
    readable in both themes. */
 .asset-icon { flex: none; display: inline-block; border-radius: 50%; vertical-align: middle; }

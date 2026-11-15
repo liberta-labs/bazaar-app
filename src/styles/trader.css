@@ -1,0 +1,38 @@
+/* A trader's page (pages/Trader.tsx): who they are and their totals beside their profit and loss, then
+   their positions and activity. The two cards stack on a narrow screen. */
+.trader-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.trader-card { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; }
+.trader-who { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.trader-avatar { width: 56px; height: 56px; border-radius: 50%; flex: none; }
+.trader-name { font-size: 22px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.trader-actions { margin-left: auto; }
+.trader-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); text-align: center; }
+.trader-stat { font-family: var(--mono); font-size: 18px; color: var(--strong); overflow-wrap: anywhere; }
+
+.trader-pnl { display: flex; flex-direction: column; gap: 4px; }
+.trader-pnl-value { font-family: var(--mono); font-size: 28px; color: var(--strong); }
+.trader-pnl-value.up { color: var(--up); }
+.trader-pnl-value.down { color: var(--down); }
+.trader-periods { display: flex; gap: 2px; }
+.trader-periods button { border: none; background: transparent; color: var(--muted); padding: 4px 8px; min-height: 0; }
+.trader-periods button.on { background: var(--panel-2); color: var(--accent-text); }
+.trader-chart { width: 100%; height: 120px; margin-top: 8px; display: block; }
+.trader-chart .zero { stroke: var(--border); stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.trader-chart .stroke { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trader-chart .fill { stroke: none; opacity: 0.15; }
+.trader-chart.up .stroke { stroke: var(--up); }
+.trader-chart.up .fill { fill: var(--up); }
+.trader-chart.down .stroke { stroke: var(--down); }
+.trader-chart.down .fill { fill: var(--down); }
+.trader-chart.flat .stroke { stroke: var(--muted); }
+.trader-chart.flat .fill { fill: none; }
+
+.trader-asset { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.trader-market { display: inline-flex; align-items: center; gap: 8px; color: var(--strong); white-space: nowrap; }
+
+@media (max-width: 860px) {
+  .trader-top { grid-template-columns: minmax(0, 1fr); }
+  .trader-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* The buttons on a row of their own, so the name and its line keep the width. */
+  .trader-actions { margin-left: 0; flex-basis: 100%; }
+}

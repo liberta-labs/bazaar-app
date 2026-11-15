@@ -7,8 +7,9 @@
  */
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { usePaged } from "../components/Pager";
 import { Empty, Loading, Tip, useAsync } from "../components/ui";
-import { ACTIVE, addressUrl } from "../config/networks";
+import { ACTIVE } from "../config/networks";
 import { explain } from "../lib/errors";
 import { relative, shortAddr } from "../lib/format";
 import {
@@ -30,8 +31,8 @@ import "../styles/leaderboard.css";
 
 /** How often an open page reads the board again: the service makes a new one every 15 minutes. */
 const REFRESH_MS = 5 * 60_000;
-/** Rows shown before "Show all". */
-const SHOWN = 100;
+/** Rows on each page of the standings. */
+const PAGE_SIZE = 20;
 
 const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
 
@@ -90,9 +91,9 @@ function Podium({ entries, mine }: { entries: readonly LeaderboardEntry[]; mine:
                 <E label={`Rank ${s.e.rank}`}>{medalOf(s.e.rank) ?? "🎖️"}</E>
               </div>
               <div className="lb-who">
-                <a className="mono small" style={{ whiteSpace: "nowrap" }} href={addressUrl(s.e.account)} target="_blank" rel="noopener noreferrer">
+                <Link className="mono small" style={{ whiteSpace: "nowrap" }} to={`/trader/${s.e.account}`} title="Open this trader's page">
                   {shortAddr(s.e.account)}
-                </a>
+                </Link>
                 {s.e.account === mine && <You />}
               </div>
               <div className="small muted">
@@ -296,9 +297,59 @@ function YourProgress({ board }: { board: Leaderboard }) {
   );
 }
 
+/** One trader's row in the standings; `pinned` is your own, repeated above the page. */
+function StandingRow({ e, mine, pinned = false }: { e: LeaderboardEntry; mine: string | undefined; pinned?: boolean }) {
+  const lvl = levelOf(e.points).level;
+  const medal = medalOf(e.rank);
+  return (
+    <tr className={`${e.account === mine ? "lb-mine" : ""}${pinned ? " lb-pinned" : ""}`}>
+      <td className="num lb-rank">{medal ? <E label={`Rank ${e.rank}`}>{medal}</E> : <span className={pinned ? "" : "small muted"}>#{e.rank}</span>}</td>
+      <td>
+        <span className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+          <Tip text={lvl.name}>
+            <E label={lvl.name}>{lvl.emoji}</E>
+          </Tip>
+          <Link className="mono" style={{ whiteSpace: "nowrap" }} to={`/trader/${e.account}`} title="Open this trader's page">
+            {shortAddr(e.account)}
+          </Link>
+          {e.account === mine && <You />}
+        </span>
+      </td>
+      <td className="num">
+        <b>{e.points.toLocaleString()}</b>
+      </td>
+      <td>
+        <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
+          <span className="hide-sm">
+            <BadgeStrip badges={e.badges} />
+          </span>
+          <span className="small muted" style={{ whiteSpace: "nowrap" }}>
+            {e.badges.length}/{BADGES.length}
+          </span>
+        </span>
+      </td>
+      <td className="num" style={{ whiteSpace: "nowrap" }}>
+        {e.currentStreak > 0 ? (
+          <>
+            <E>🔥</E> {e.currentStreak}
+          </>
+        ) : (
+          <span className="muted">–</span>
+        )}
+      </td>
+      <td className="num hide-sm">{days(e.longestStreak)}</td>
+      <td className="num hide-sm">{e.daysActive}</td>
+    </tr>
+  );
+}
+
+/**
+ * The standings, a page of {@link PAGE_SIZE} at a time. A connected trader's own row comes first on every
+ * page, highlighted with their rank, so they never page through the board to find themselves; one with no
+ * points yet sees a row saying so.
+ */
 function Standings({ board, mine }: { board: Leaderboard; mine: string | undefined }) {
-  const [all, setAll] = useState(false);
-  const { sorted, th } = useSort(board.entries, {
+  const { sorted, th: sortTh } = useSort(board.entries, {
     rank: (e: LeaderboardEntry) => e.rank,
     points: (e: LeaderboardEntry) => e.points,
     badges: (e: LeaderboardEntry) => e.badges.length,
@@ -306,7 +357,23 @@ function Standings({ board, mine }: { board: Leaderboard; mine: string | undefin
     current: (e: LeaderboardEntry) => e.currentStreak,
     longest: (e: LeaderboardEntry) => e.longestStreak,
   });
-  const rows = all ? sorted : sorted.slice(0, SHOWN);
+  // A new sort starts again from the first page.
+  const th = (key: string, className?: string) => {
+    const p = sortTh(key, className);
+    return {
+      ...p,
+      onClick: () => {
+        setPage(0);
+        p.onClick();
+      },
+      onKeyDown: (ev: React.KeyboardEvent) => {
+        if (ev.key === "Enter" || ev.key === " ") setPage(0);
+        p.onKeyDown(ev);
+      },
+    };
+  };
+  const { shown: rows, pager, setPage } = usePaged(sorted, PAGE_SIZE);
+  const me = entryOf(board, mine);
   return (
     <section className="panel tight">
       <div className="panel-head">
@@ -331,60 +398,35 @@ function Standings({ board, mine }: { board: Leaderboard; mine: string | undefin
                 <th {...th("days", "num hide-sm")}>Days traded</th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((e) => {
-                const lvl = levelOf(e.points).level;
-                const medal = medalOf(e.rank);
-                return (
-                  <tr key={e.account} className={e.account === mine ? "lb-mine" : ""}>
-                    <td className="num lb-rank">{medal ? <E label={`Rank ${e.rank}`}>{medal}</E> : <span className="small muted">#{e.rank}</span>}</td>
-                    <td>
+            {mine && (
+              <tbody className="lb-pinned-body">
+                {me ? (
+                  <StandingRow e={me} mine={mine} pinned />
+                ) : (
+                  <tr className="lb-mine lb-pinned">
+                    <td className="num lb-rank">
+                      <span className="muted">–</span>
+                    </td>
+                    <td colSpan={6}>
                       <span className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
-                        <Tip text={lvl.name}>
-                          <E label={lvl.name}>{lvl.emoji}</E>
-                        </Tip>
-                        <a className="mono" style={{ whiteSpace: "nowrap" }} href={addressUrl(e.account)} target="_blank" rel="noopener noreferrer">
-                          {shortAddr(e.account)}
-                        </a>
-                        {e.account === mine && <You />}
+                        <span className="mono">{shortAddr(mine)}</span>
+                        <You />
+                        <span className="small muted">Not on the board yet: your first deposit or trade puts you on it.</span>
                       </span>
                     </td>
-                    <td className="num">
-                      <b>{e.points.toLocaleString()}</b>
-                    </td>
-                    <td>
-                      <span className="row" style={{ gap: 8, flexWrap: "nowrap" }}>
-                        <span className="hide-sm">
-                          <BadgeStrip badges={e.badges} />
-                        </span>
-                        <span className="small muted" style={{ whiteSpace: "nowrap" }}>
-                          {e.badges.length}/{BADGES.length}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="num" style={{ whiteSpace: "nowrap" }}>
-                      {e.currentStreak > 0 ? (
-                        <>
-                          <E>🔥</E> {e.currentStreak}
-                        </>
-                      ) : (
-                        <span className="muted">–</span>
-                      )}
-                    </td>
-                    <td className="num hide-sm">{days(e.longestStreak)}</td>
-                    <td className="num hide-sm">{e.daysActive}</td>
                   </tr>
-                );
-              })}
+                )}
+              </tbody>
+            )}
+            <tbody>
+              {rows.map((e) => (
+                <StandingRow key={e.account} e={e} mine={mine} />
+              ))}
             </tbody>
           </table>
         </div>
       )}
-      {!all && sorted.length > SHOWN && (
-        <div className="row" style={{ justifyContent: "center", padding: 10 }}>
-          <button onClick={() => setAll(true)}>Show all {sorted.length}</button>
-        </div>
-      )}
+      {pager}
     </section>
   );
 }

@@ -6,6 +6,7 @@ import { MarketPage } from "./pages/Market";
 import { MarketsPage } from "./pages/Markets";
 import { PortfolioPage } from "./pages/Portfolio";
 import { ProposalsPage } from "./pages/Proposals";
+import { TraderPage } from "./pages/Trader";
 import { ActivityProvider } from "./state/activity";
 import { ConnectionProviders } from "./state/connection";
 import { DayStatsProvider, LiveAccountProvider } from "./state/data";
@@ -31,6 +32,7 @@ export function App() {
               <Route path="/proposals" element={<ProposalsPage />} />
               <Route path="/governance" element={<Navigate to="/proposals" replace />} />
               <Route path="/leaderboard" element={<LeaderboardPage />} />
+              <Route path="/trader/:address" element={<TraderPage />} />
               {/* Profile's parts live on Portfolio, Proposals ("Yours") and the wallet's own account panel. */}
               <Route path="/profile" element={<Navigate to="/portfolio" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />

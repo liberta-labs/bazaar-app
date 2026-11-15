@@ -98,6 +98,8 @@
 /* The standings. */
 .lb-table td.lb-rank { font-size: 18px; }
 .lb-table tr.lb-mine td { background: var(--warn-bg); }
+/* Your own row, pinned above every page: set off from the page below it by an accent rule. */
+.lb-table tbody.lb-pinned-body tr td { border-bottom: 2px solid var(--accent-line); font-weight: 600; }
 .lb-table .lb-strip { justify-content: flex-start; font-size: 14px; }
 
 @keyframes lb-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }

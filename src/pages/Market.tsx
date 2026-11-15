@@ -14,7 +14,7 @@ import { type ChartCandle, PriceChart } from "../components/PriceChart";
 import { Empty, Loading, Term, Tip } from "../components/ui";
 import { type ChartMark, chartMarks } from "../lib/chartMarks";
 import { GLOSSARY } from "../lib/glossary";
-import { price } from "../lib/format";
+import { chartPrecision, price } from "../lib/format";
 import { useBoard, useMarketInfo, useRead } from "../state/connection";
 import { useLiveAccount, useStablePrices } from "../state/data";
 import { usePageActive } from "../state/activity";
@@ -25,12 +25,6 @@ const CANDLES_SHOWN = 300;
 /** Whether the chart shows your orders and position ("0" hides them), kept per browser. */
 const SHOW_MINE_KEY = "bazaar.chartMine";
 const NO_MARKS: readonly ChartMark[] = [];
-
-function precisionOf(p: bigint | null): number {
-  if (!p) return 2;
-  const whole = p / 10n ** 18n;
-  return whole >= 1000n ? 2 : whole >= 1n ? 4 : 6;
-}
 
 /** Candles from the subgraph, gaps filled, the last one updated from live trades. */
 function useCandles(pair: string | undefined, interval: number) {
@@ -213,7 +207,7 @@ export function MarketPage() {
               )}
             </div>
             <div className="chart-box">
-              <PriceChart candles={candles} viewKey={`${info.address}:${interval}`} oracle={live?.spot ?? null} precision={precisionOf(spot?.spot ?? null)} marks={showMine ? marks : NO_MARKS} />
+              <PriceChart candles={candles} viewKey={`${info.address}:${interval}`} oracle={live?.spot ?? null} precision={chartPrecision(spot?.spot ?? null)} marks={showMine ? marks : NO_MARKS} />
               {quiet && (
                 <div className="chart-empty">
                   <div>

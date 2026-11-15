@@ -5,8 +5,45 @@
 import { allowance, format, formatUnits18, parseUnits18, toNumber18 } from "@liberta-labs/bazaar-sdk";
 
 export const usd = (x: bigint) => format.formatUsd(x);
-export const price = (x: bigint) => format.formatPrice(x);
 export const amount = (x: bigint, dp = 6) => format.formatAmount(x, dp);
+
+/** Zeros between the decimal point and the first significant digit of an 18-decimal amount: 0.001372 has 2; 1 or more, and 0, have none. */
+export function zerosAfterPoint(x: bigint): number {
+  const abs = x < 0n ? -x : x;
+  let zeros = 0;
+  for (let unit = 10n ** 17n; abs > 0n && abs < unit; unit /= 10n) zeros++;
+  return zeros;
+}
+
+/**
+ * A price, as the SDK formats it, except under $0.0001, where its 8 decimals would leave a meme coin as
+ * $0.00000007 and a day's change as $0: there it keeps 4 significant figures, $0.00000007123.
+ */
+export function price(x: bigint): string {
+  const abs = x < 0n ? -x : x;
+  if (abs === 0n || abs >= 10n ** 14n) return format.formatPrice(x);
+  return `${x < 0n ? "-" : ""}$${format.formatAmount(abs, zerosAfterPoint(abs) + 4)}`;
+}
+
+/**
+ * A price chart's axis decimals: 2 from $1,000, 4 from $1, and under $1 at least 6, more for a smaller
+ * price so the axis keeps 5 significant figures (MOG at $0.00000007 needs 12, or every label reads 0.000000).
+ */
+export function chartPrecision(p: bigint | null): number {
+  if (!p) return 2;
+  const whole = p / 10n ** 18n;
+  return whole >= 1000n ? 2 : whole >= 1n ? 4 : Math.max(6, zerosAfterPoint(p) + 5);
+}
+
+/**
+ * A suggested price for a form field: its hint, or what the mark button fills in. From $1, 2 decimals;
+ * under $1, at least 6 and enough for 5 significant figures, so DOGE's $0.05783 doesn't become 0.05 and
+ * MOG's $0.0000000753 doesn't become 0. (A book level or an order's own price goes in exactly.)
+ */
+export function priceInput(p: bigint): string {
+  const abs = p < 0n ? -p : p;
+  return toInput(p, abs >= 10n ** 18n ? 2 : Math.max(6, zerosAfterPoint(abs) + 5));
+}
 
 /**
  * A position or order size (18 decimals) to at least 4 significant figures, so a small size never
@@ -14,11 +51,7 @@ export const amount = (x: bigint, dp = 6) => format.formatAmount(x, dp);
  * not 0. At least 4 decimals, at most 10.
  */
 export function sizeText(x: bigint): string {
-  const abs = x < 0n ? -x : x;
-  // Zeros between the decimal point and the first significant digit: 0.001372 has 2.
-  let zeros = 0;
-  for (let unit = 10n ** 17n; abs > 0n && abs < unit && zeros < 6; unit /= 10n) zeros++;
-  return format.formatAmount(x, zeros + 4);
+  return format.formatAmount(x, Math.min(zerosAfterPoint(x), 6) + 4);
 }
 export const usdcUnits = (x: bigint) => allowance.formatUsdcUnits(x);
 

@@ -504,7 +504,7 @@ const dollarsAt = (size: bigint, at: bigint) => ((size * at) / E18 / CENT) * CEN
 function EditOrderDialog({ s, o, onClose }: { s: account.AccountSnapshot; o: account.AccountOrder; onClose: () => void }) {
   const tx = useTx();
   const base = baseOf(s.market.label);
-  const [priceText, setPriceText] = useState(toInput(o.limitPrice, 8));
+  const [priceText, setPriceText] = useState(toInput(o.limitPrice, 18));
   const [unit, setUnit] = useState<"base" | "usd">("base");
   const [sizeText, setSizeText] = useState(toInput(o.remaining, 8));
   // The order's own size, to the last unit, until the size is typed over: left alone, the size stays

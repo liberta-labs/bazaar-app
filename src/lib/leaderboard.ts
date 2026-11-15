@@ -5,7 +5,7 @@
  */
 import { SERVICE_URL } from "../config/env";
 
-export const BADGES = ["deposit", "marketOrder", "makerFill", "tpslTriggered", "threeMarkets", "insurance", "proposal", "insurerVote", "keeper"] as const;
+export const BADGES = ["deposit", "marketOrder", "makerFill", "tpslTriggered", "threeMarkets", "insurance", "proposal", "keeper"] as const;
 export type Badge = (typeof BADGES)[number];
 
 export interface LeaderboardEntry {
@@ -37,16 +37,15 @@ export const BADGE_INFO: Record<Badge, { readonly label: string; readonly emoji:
   threeMarkets: { label: "Three markets", emoji: "🌍", how: "Trade on three different markets.", to: "/" },
   insurance: { label: "Insurer", emoji: "☂️", how: "Deposit to a market's insurance fund.", to: "/earn" },
   proposal: { label: "Proposal", emoji: "📜", how: "Propose a new market, a market's termination, or an identifier upgrade.", to: "/proposals" },
-  insurerVote: { label: "Insurer vote", emoji: "🗳️", how: "Vote on an insurer proposal for a fund you're in.", to: "/proposals" },
   keeper: { label: "Keeper", emoji: "🤖", how: "Run a liquidation, trigger or ADL batch for someone else, with the SDK's keeper." },
 };
 
-/** Levels by points, lowest first. Nine badges reach Pro; Legend takes a few weeks of coming back too. */
+/** Levels by points, lowest first. All eight badges reach Pro; Legend takes a few weeks of coming back too. */
 export const LEVELS = [
   { min: 0, name: "Rookie", emoji: "🌱" },
   { min: 200, name: "Explorer", emoji: "🧭" },
   { min: 500, name: "Trader", emoji: "⚔️" },
-  { min: 900, name: "Pro", emoji: "🏅" },
+  { min: 800, name: "Pro", emoji: "🏅" },
   { min: 1500, name: "Legend", emoji: "👑" },
 ] as const;
 export type Level = (typeof LEVELS)[number];
