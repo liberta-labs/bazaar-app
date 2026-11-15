@@ -4,7 +4,7 @@
  */
 import { arbitrum, arbitrumSepolia } from "@reown/appkit/networks";
 import type { AppKitNetwork } from "@reown/appkit/networks";
-import { RPC_URL } from "./env";
+import { RPC_URL, RPC_WS_URLS } from "./env";
 
 export interface AppNetwork {
   readonly chainId: number;
@@ -13,6 +13,11 @@ export interface AppNetwork {
   readonly testnet: boolean;
   /** JSON-RPC for read-only browsing, and what wallet_addEthereumChain offers. */
   readonly rpcUrl: string;
+  /**
+   * Free public WebSocket RPCs, used only to hear of each new block at once (lib/headsTransport.ts): every
+   * read still goes to rpcUrl. In order of preference; empty, the page polls.
+   */
+  readonly headsWsUrls: readonly string[];
   readonly explorer: string;
   readonly nativeCurrency: { name: string; symbol: string; decimals: number };
   /** What AppKit knows the chain as. */
@@ -27,6 +32,7 @@ export const NETWORKS: Readonly<Record<number, AppNetwork>> = {
     name: "Arbitrum Sepolia",
     testnet: true,
     rpcUrl: RPC_URL,
+    headsWsUrls: RPC_WS_URLS ?? ["wss://arbitrum-sepolia.drpc.org", "wss://arbitrum-sepolia-rpc.publicnode.com"],
     explorer: "https://sepolia.arbiscan.io",
     nativeCurrency: { name: "Arbitrum Sepolia Ether", symbol: "ETH", decimals: 18 },
     appkit: arbitrumSepolia,
@@ -40,6 +46,7 @@ export const NETWORKS: Readonly<Record<number, AppNetwork>> = {
     name: "Arbitrum One",
     testnet: false,
     rpcUrl: "https://arb1.arbitrum.io/rpc",
+    headsWsUrls: RPC_WS_URLS ?? ["wss://arbitrum.drpc.org", "wss://arbitrum-one-rpc.publicnode.com"],
     explorer: "https://arbiscan.io",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     appkit: arbitrum,

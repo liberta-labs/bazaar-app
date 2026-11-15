@@ -56,6 +56,7 @@ Fill in `.env` (every value is public; it ends up in the bundle):
 |---|---|---|
 | `VITE_SERVICE_URL` | `http://localhost:8080` | The price board and relayer service. The deployed one is `https://bazaar-relayer-priceboard.fly.dev`, which `.env.production` sets for `npm run build`. |
 | `VITE_RPC_URL` | `https://sepolia-rollup.arbitrum.io/rpc` | JSON-RPC for read-only browsing. |
+| `VITE_RPC_WS_URLS` | dRPC, then PublicNode (free, public) | Optional. WebSocket RPCs, comma-separated, used only to hear of each new block at once, so a market page reads (from `VITE_RPC_URL`, at most twice a second) within about half a second of a trade. Falls back to polling every second when none connects; `none` turns them off. Never one with an API key. |
 | `VITE_SUBGRAPH_URL` | the official deployment's | Optional. A subgraph the page queries itself only when the service cannot answer history. Never one with an API key. |
 | `VITE_REOWN_PROJECT_ID` | none | Reown project ID. Without it, browser wallets still connect but WalletConnect (phone wallets) does not. Allowlist the app's domains in Reown's dashboard. |
 

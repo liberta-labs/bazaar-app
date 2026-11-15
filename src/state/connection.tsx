@@ -6,7 +6,7 @@
  *   and sending go through it (the SDK's signRelayed and send take the same provider as `wallet`).
  * Plus the price board, the wallet's state, and the smart-wallet check.
  */
-import { Bazaar, type markets } from "@liberta-labs/bazaar-sdk";
+import { Bazaar, JsonRpc, type markets } from "@liberta-labs/bazaar-sdk";
 import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDisconnect } from "@reown/appkit/react";
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getAddress } from "viem";
@@ -15,6 +15,7 @@ import { RPC_URL, SERVICE_URL, SUBGRAPH_URL } from "../config/env";
 import { ACTIVE } from "../config/networks";
 import { type Board, BoardPrices, fetchBoard } from "../lib/board";
 import { explain } from "../lib/errors";
+import { headsTransport } from "../lib/headsTransport";
 import { RelayService } from "../lib/relay";
 import { appSubgraph } from "../lib/subgraph";
 import { usePageActive } from "./activity";
@@ -59,7 +60,9 @@ function ReadProvider({ children }: { children: ReactNode }) {
     let dead = false;
     (async () => {
       try {
-        const bz = await Bazaar.connect({ transport: RPC_URL, chainId: ACTIVE.chainId, subgraph: SUBGRAPH });
+        // Reads over the HTTP RPC; new blocks heard of at once over a free WebSocket (lib/headsTransport.ts).
+        const transport = headsTransport({ http: new JsonRpc(RPC_URL), wsUrls: ACTIVE.headsWsUrls });
+        const bz = await Bazaar.connect({ transport, chainId: ACTIVE.chainId, subgraph: SUBGRAPH });
         if (dead) return;
         setReadBz(bz);
         const ms = await bz.markets.listMarkets();

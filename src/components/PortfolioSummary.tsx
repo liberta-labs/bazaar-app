@@ -1,19 +1,22 @@
 /**
- * The Portfolio's head: volume and fees over two weeks, the account over a chosen period with what it
- * holds now, and a chart of daily P&L or volume. The history is the subgraph's per-day account data, one
- * query for every period; what the account holds now comes from the live account and the insurance read
- * the Balances tab shares.
+ * The Portfolio's head: volume and fees over the period chosen in the Account panel, with the unclaimed
+ * balance and a button that claims it all; the account's P&L over that period and what it holds now; and
+ * a chart of daily P&L or volume. The history is the subgraph's per-day account data, one query for every
+ * period; what the account holds now comes from the live account and the insurance read the Balances tab
+ * shares.
  */
 import { account, fromUsdcUnits, type history } from "@liberta-labs/bazaar-sdk";
 import { useMemo, useState } from "react";
 import type { Address } from "viem";
 import { signedUsd, usd } from "../lib/format";
+import { claimFeesPart } from "../lib/jobs";
 import { ytdDays } from "../lib/periods";
 import { useBoard, useRead } from "../state/connection";
 import { useLiveAccount } from "../state/data";
 import { useInsuranceStakes } from "../state/insurance";
+import { useTx } from "../state/tx";
 import { PnlChart } from "./PnlChart";
-import { Loading, Pnl, Term, Tip, useAsync } from "./ui";
+import { ActionButton, Loading, Pnl, Term, Tip, useAsync } from "./ui";
 
 const DAY = 86_400;
 const PERIODS = [
@@ -58,6 +61,7 @@ export function PortfolioSummary({ user }: { user: Address }) {
   const { readBz } = useRead();
   const { prices } = useBoard();
   const acct = useLiveAccount();
+  const tx = useTx();
   const stakes = useInsuranceStakes(user);
   const [period, setPeriod] = useState<Period>("30");
   const [chart, setChart] = useState<"pnl" | "volume">("pnl");
@@ -67,10 +71,11 @@ export function PortfolioSummary({ user }: { user: Address }) {
   const today = now - (now % DAY);
   const all = history.data ?? [];
   const since = (n: number) => all.filter((d) => d.date > today - n * DAY);
-  const fortnight = sum(since(14));
   const lifetime = sum(all);
   const span = daysOf(period);
   const inPeriod = span === null ? lifetime : sum(since(span));
+  // The period as the cards name it: "Volume, 30 days", "Fees paid, year to date".
+  const periodName = PERIODS.find((p) => p.key === period)!.label.toLowerCase();
 
   // What the account holds now.
   const held = useMemo(() => {
@@ -92,6 +97,23 @@ export function PortfolioSummary({ user }: { user: Address }) {
     return { collateral, unrealized, funding, claimable, wallet };
   }, [acct.snaps, prices]);
   const insured = (stakes.data ?? []).reduce((t, k) => t + k.value, 0n);
+
+  // Every market with something to claim, largest first. Each keeps its own balance and a claim has no
+  // gasless form, so claiming them all is one wallet transaction per market, in one window.
+  const owed = [...acct.snaps.values()].filter((s) => s.claimableFees > 0n).sort((a, b) => (b.claimableFees > a.claimableFees ? 1 : -1));
+  const claimAll = () => {
+    const n = owed.length;
+    const where = n === 1 ? `on ${owed[0]!.market.label}` : `across ${n} markets`;
+    void tx.run({
+      title: n === 1 ? `Claim on ${owed[0]!.market.label}` : `Claim on ${n} markets`,
+      summary: [
+        `Send ${usd(held.claimable)} you're owed ${where} to your wallet.`,
+        ...(n > 1 ? [`Each market's balance is claimed in its own transaction, so your wallet asks ${n} times.`] : []),
+        "Sent from your wallet: it needs a little ETH for gas.",
+      ],
+      parts: owed.map((s) => claimFeesPart(s.market.address, `Claim ${usd(s.claimableFees)} on ${s.market.label}`)),
+    });
+  };
   const markets = held.collateral + held.unrealized;
   const total = markets + insured + held.claimable + held.wallet;
 
@@ -104,14 +126,22 @@ export function PortfolioSummary({ user }: { user: Address }) {
     <div className="summary-grid">
       <div className="stat-stack">
         <div className="stat">
-          <div className="label">14-day volume</div>
-          <div className="value">{loading ? "…" : usd(fortnight.volume)}</div>
-          <div className="small muted">{loading ? "" : `${fortnight.trades} fills · lifetime ${usd(lifetime.volume)}`}</div>
+          <div className="label">Volume, {periodName}</div>
+          <div className="value">{loading ? "…" : usd(inPeriod.volume)}</div>
+          <div className="small muted">{loading ? "" : `${inPeriod.trades.toLocaleString()} fills${span === null ? "" : ` · lifetime ${usd(lifetime.volume)}`}`}</div>
         </div>
         <div className="stat">
-          <div className="label">14-day fees paid</div>
-          <div className="value">{loading ? "…" : usd(fortnight.fees)}</div>
-          <div className="small muted">{loading ? "" : `lifetime ${usd(lifetime.fees)}. Rates vary by market: each ticket shows its own.`}</div>
+          <div className="label">Fees paid, {periodName}</div>
+          <div className="value">{loading ? "…" : usd(inPeriod.fees)}</div>
+          <div className="small muted">{loading ? "" : `${span === null ? "" : `lifetime ${usd(lifetime.fees)}. `}Rates vary by market: each ticket shows its own.`}</div>
+          <div className="spread summary-claim">
+            <span className="small">
+              <Term t="claimable">Unclaimed</Term> <b className="mono">{usd(held.claimable)}</b>
+            </span>
+            <ActionButton className="small" onClick={claimAll} disabledReason={owed.length ? null : "Nothing to claim: refunded bounties and rewards show here when a market owes you some."}>
+              {owed.length > 1 ? `Claim all (${owed.length} markets)` : "Claim"}
+            </ActionButton>
+          </div>
         </div>
       </div>
 
@@ -133,10 +163,6 @@ export function PortfolioSummary({ user }: { user: Address }) {
             </Tip>
           </span>
           <span>{loading ? "…" : <Pnl value={inPeriod.pnl - inPeriod.fees}>{signedUsd(inPeriod.pnl - inPeriod.fees)}</Pnl>}</span>
-          <span>Volume</span>
-          <span>{loading ? "…" : usd(inPeriod.volume)}</span>
-          <span>Fees</span>
-          <span>{loading ? "…" : usd(inPeriod.fees)}</span>
         </div>
         <div className="kv summary-equity">
           <span>

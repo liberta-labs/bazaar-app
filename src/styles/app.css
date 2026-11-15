@@ -180,6 +180,8 @@ main { flex: 1; width: 100%; max-width: 1440px; margin: 0 auto; padding: 16px va
 .stat { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-width: 0; }
 .stat .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .stat .value { font-family: var(--mono); font-size: 18px; color: var(--strong); overflow-wrap: anywhere; }
+/* The Portfolio fees card's unclaimed balance and its Claim button, under a rule. */
+.stat .summary-claim { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 13px; }
 .kv > :nth-child(odd) { color: var(--muted); }
 .kv > :nth-child(even) { text-align: right; font-family: var(--mono); overflow-wrap: anywhere; }
