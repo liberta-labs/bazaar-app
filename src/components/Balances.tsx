@@ -15,6 +15,7 @@ import { AssetIcon } from "./AssetIcon";
 import { CollateralPanel } from "./Collateral";
 import { ExportCsv } from "./ExportCsv";
 import { Modal } from "./Modal";
+import { ACCOUNT_PAGE, usePaged } from "./Pager";
 import { TableTools } from "./TableTools";
 import { useSort } from "../state/sort";
 import { ActionButton, Empty, Pnl, Term, Tip } from "./ui";
@@ -162,7 +163,7 @@ export function BalancesTable({ snaps }: { snaps: readonly account.AccountSnapsh
   }
 
   const visible = hideSmall ? rows.filter((r) => r.value >= SMALL) : rows;
-  const { sorted: shown, th } = useSort(visible, {
+  const { sorted: shown, th, order } = useSort(visible, {
     asset: (r) => r.name,
     type: (r) => r.type,
     total: (r) => r.totalAmount,
@@ -170,6 +171,7 @@ export function BalancesTable({ snaps }: { snaps: readonly account.AccountSnapsh
     value: (r) => r.value,
     pnl: (r) => r.pnl?.amount,
   });
+  const { shown: page, pager } = usePaged(shown, ACCOUNT_PAGE, `${order}|${hideSmall}`);
   const total = rows.reduce((t, r) => t + r.value, 0n);
   if (!rows.length) return <Empty title="Nothing here yet">Get test USDC, then deposit on a market to trade or insure it.</Empty>;
   return (
@@ -214,7 +216,7 @@ export function BalancesTable({ snaps }: { snaps: readonly account.AccountSnapsh
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => (
+            {page.map((r) => (
               <tr key={r.key}>
                 <td data-main="">{r.asset}</td>
                 <td data-label="Type">
@@ -243,6 +245,7 @@ export function BalancesTable({ snaps }: { snaps: readonly account.AccountSnapsh
           </tbody>
         </table>
       </div>
+      {pager}
       {!shown.length && <p className="small muted" style={{ padding: "0 10px" }}>Every balance is under $1.</p>}
       {dialog && (
         <Modal title={`${dialog.s.market.label} collateral`} onClose={() => setDialog(null)}>

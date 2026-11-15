@@ -43,5 +43,7 @@ export function useSort<T>(rows: readonly T[], keys: Readonly<Record<string, (ro
       title: dir === undefined ? "Sort by this column" : dir === "asc" ? "Sorted low to high; click to reverse" : "Sorted high to low; click to reverse",
     };
   };
-  return { sorted, th, sorting: state !== null && by !== undefined };
+  /** The order shown, as text that changes with it ("" for the rows' own order), for a pager to start again on. */
+  const order = state && by ? `${state.key}:${state.dir}` : "";
+  return { sorted, th, sorting: state !== null && by !== undefined, order };
 }

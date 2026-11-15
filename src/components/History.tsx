@@ -1,4 +1,8 @@
-/** A paginated history list from the subgraph, with CSV export of every page. */
+/**
+ * A history list from the subgraph, a page at a time with Previous and Next, and CSV export of every row.
+ * Pages are read as they're first opened and kept, so Previous doesn't read again; the count shows once
+ * the last page has been read.
+ */
 import type { history } from "@liberta-labs/bazaar-sdk";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { explain } from "../lib/errors";
@@ -6,6 +10,7 @@ import { reloadSize } from "../lib/historySync";
 import { downloadCsv, toCsv } from "../lib/csv";
 import type { SortValue } from "../lib/sort";
 import { useSort } from "../state/sort";
+import { ACCOUNT_PAGE, Pager, pageSummary } from "./Pager";
 import { TableTools } from "./TableTools";
 import { Empty, Loading } from "./ui";
 
@@ -33,7 +38,8 @@ function byCsv<T>(csv: HistoryColumn<T>["csv"]) {
   };
 }
 
-const PAGE = 50;
+/** Reads one page may take: a read can bring back fewer rows than it asks for (fills grouped by order, lists merged by time). */
+const MAX_READS_PER_PAGE = 10;
 const EXPORT_PAGE = 1000;
 const EXPORT_MAX_PAGES = 50;
 
@@ -43,7 +49,7 @@ export function HistoryList<T>({
   empty,
   filename,
   deps,
-  pageSize = PAGE,
+  pageSize = ACCOUNT_PAGE,
   refreshKey,
 }: {
   load: (opts: { first: number; after: string | null }) => Promise<history.Page<T>>;
@@ -51,17 +57,19 @@ export function HistoryList<T>({
   empty: { title: string; text?: string };
   filename: string;
   deps: readonly unknown[];
-  /** Rows a page shows before Load more (50 unless set). */
+  /** Rows a page shows ({@link ACCOUNT_PAGE} unless set). */
   pageSize?: number;
   /**
-   * When this changes, the list reloads in place: the same number of rows it shows, with no spinner,
-   * keeping what it had if the reload fails. The account's tables pass `historyVersion`, so what the
-   * user just did shows up on its own.
+   * When this changes, the list reloads in place: as many rows as it has read, on the same page, with no
+   * spinner, keeping what it had if the reload fails. The account's tables pass `historyVersion`, so what
+   * the user just did shows up on its own.
    */
   refreshKey?: unknown;
 }) {
+  // Every row read so far, newest first, and where the next read starts (null once the last is in).
   const [rows, setRows] = useState<T[]>([]);
   const [next, setNext] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -70,14 +78,31 @@ export function HistoryList<T>({
   const shown = useRef(0);
   shown.current = rows.length;
 
+  /**
+   * Reads on from `cursor` until `items` holds `need` rows or the list ends. Null when a newer read has
+   * replaced the rows meanwhile.
+   */
+  const fill = async (items: T[], cursor: string | null, need: number, g: number): Promise<{ items: T[]; next: string | null } | null> => {
+    for (let i = 0; i < MAX_READS_PER_PAGE && cursor !== null && items.length < need; i++) {
+      const p = await load({ first: pageSize, after: cursor });
+      if (g !== generation.current) return null;
+      items = [...items, ...p.items];
+      cursor = p.next;
+    }
+    return { items, next: cursor };
+  };
+
   const first = useCallback(async () => {
     const g = ++generation.current;
     setLoading(true);
     try {
       const p = await load({ first: pageSize, after: null });
       if (g !== generation.current) return;
-      setRows(p.items);
-      setNext(p.next);
+      const full = await fill(p.items, p.next, pageSize, g);
+      if (!full) return;
+      setRows(full.items);
+      setNext(full.next);
+      setPage(0);
       setError(null);
     } catch (e) {
       if (g === generation.current) setError(explain(e));
@@ -112,15 +137,22 @@ export function HistoryList<T>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
-  const more = async () => {
-    if (!next) return;
+  /** Opens page `to` (from 0), reading it first if it hasn't been. */
+  const go = async (to: number) => {
+    if (to < 0) return;
+    const need = (to + 1) * pageSize;
+    if (rows.length >= need || next === null) {
+      setPage(to);
+      return;
+    }
     const g = generation.current;
     setLoading(true);
     try {
-      const p = await load({ first: pageSize, after: next });
-      if (g !== generation.current) return;
-      setRows((r) => [...r, ...p.items]);
-      setNext(p.next);
+      const full = await fill(rows, next, need, g);
+      if (!full) return;
+      setRows(full.items);
+      setNext(full.next);
+      if (full.items.length > to * pageSize) setPage(to);
     } catch (e) {
       if (g === generation.current) setError(explain(e));
     } finally {
@@ -150,7 +182,12 @@ export function HistoryList<T>({
   // Every titled column sorts: by its own key where it has one, else by its CSV value.
   const sortOf = (c: HistoryColumn<T>) => c.sort ?? (c.header ? byCsv(c.csv) : undefined);
   const keys = Object.fromEntries(columns.flatMap((c, i) => (sortOf(c) ? [[String(i), sortOf(c)!]] : [])));
-  const { sorted, th, sorting } = useSort(rows, keys);
+  // The page shown; a list that shrinks on a reload keeps to a page that exists.
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const at = Math.min(page, pages - 1);
+  const onPage = rows.slice(at * pageSize, (at + 1) * pageSize);
+  const hasNext = at < pages - 1 || next !== null;
+  const { sorted, th, sorting } = useSort(onPage, keys);
 
   if (loading && !rows.length) return <Loading />;
   if (error && !rows.length) return <Empty title={error} action={<button onClick={() => void first()}>Try again</button>} />;
@@ -165,8 +202,8 @@ export function HistoryList<T>({
           Refresh
         </button>
       </TableTools>
-      {/* Sorting orders what has loaded; a page loaded later joins the same order. */}
-      {sorting && next && <p className="small muted table-note">Sorted within the {rows.length} rows loaded. Load more to include older ones.</p>}
+      {/* A sort orders the page shown: the rows past it haven't all been read. */}
+      {sorting && (at > 0 || hasNext) && <p className="small muted table-note">Sorted within this page.</p>}
       <div className="table-wrap">
         <table>
           <thead>
@@ -198,13 +235,13 @@ export function HistoryList<T>({
         </table>
       </div>
       {error && <p className="down small">{error}</p>}
-      {next && (
-        <div className="row" style={{ justifyContent: "center", padding: 10 }}>
-          <button onClick={() => void more()} disabled={loading}>
-            {loading ? "Loading…" : "Load more"}
-          </button>
-        </div>
-      )}
+      <Pager
+        page={at}
+        hasNext={hasNext}
+        onPage={(p) => void go(p)}
+        busy={loading}
+        summary={`${pageSummary(at, pageSize, onPage.length, next === null ? rows.length : null)}${loading ? " · loading…" : ""}`}
+      />
     </>
   );
 }

@@ -1587,7 +1587,7 @@ function Identifier() {
   );
 }
 
-/** Rows each proposal history shows before Load more. */
+/** Rows a page of each proposal history shows. */
 const PROPOSALS_PAGE = 10;
 
 type ProposalTab = "listings" | "terminations" | "identifier";

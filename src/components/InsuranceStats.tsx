@@ -14,8 +14,10 @@ import { useSort } from "../state/sort";
 import { AssetIcon } from "./AssetIcon";
 import { ExportCsv } from "./ExportCsv";
 import { HistoryList } from "./History";
+import { ACCOUNT_PAGE, usePaged } from "./Pager";
 import { Empty, Loading, Pnl, Term, Tip, TxLink, useAsync } from "./ui";
 
+/** Rows a page of the votes and the insurance history shows: shorter than the stakes above them, as they share the tab. */
 const PAGE = 10;
 
 const EVENT_TEXT: Record<history.InsuranceEventKind, string> = {
@@ -56,7 +58,7 @@ export function InsuranceStats({ readBz, user }: { readBz: Bazaar; user: Address
     const ofFund = value !== null && snap && snap.insurance.freeCapital > 0n ? Number((value * 10_000n) / snap.insurance.freeCapital) / 10_000 : null;
     return { p, value, gain, ofFund, label: market(p.pair)?.label ?? p.pair };
   });
-  const { sorted, th } = useSort(rows, {
+  const { sorted, th, order } = useSort(rows, {
     market: (r) => r.label,
     shares: (r) => r.p.shares,
     ofFund: (r) => r.ofFund,
@@ -67,6 +69,7 @@ export function InsuranceStats({ readBz, user }: { readBz: Bazaar; user: Address
     since: (r) => r.p.createdTimestamp,
     exit: (r) => (r.p.requestedShares > 0n ? r.p.requestedShares : null),
   });
+  const { shown, pager } = usePaged(sorted, ACCOUNT_PAGE, order);
 
   if (funds.loading && !funds.data) return <Loading what="Reading your insurance" />;
   if (!rows.length) return <Empty title="You haven't insured a market yet">Insure one on the Earn page to earn a share of its trading fees.</Empty>;
@@ -156,7 +159,7 @@ export function InsuranceStats({ readBz, user }: { readBz: Bazaar; user: Address
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ p, value: v, gain: g, ofFund }) => {
+            {shown.map(({ p, value: v, gain: g, ofFund }) => {
               const m = market(p.pair);
               return (
                 <tr key={p.id}>
@@ -213,6 +216,7 @@ export function InsuranceStats({ readBz, user }: { readBz: Bazaar; user: Address
           </tbody>
         </table>
       </div>
+      {pager}
 
       <h3 style={{ padding: "16px 10px 0" }}>Insurer votes</h3>
       <HistoryList<history.InsurerVote>

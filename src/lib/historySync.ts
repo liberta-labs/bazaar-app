@@ -31,7 +31,7 @@ export function reloadIn(now: number, since: number, settle: number): number {
   return Math.max(0, Math.min(settle, since + settle + MAX_DEFER_MS - now));
 }
 
-/** The rows a reload asks for: as many as the table shows, so pages loaded with Load more stay. */
+/** The rows a reload asks for: as many as the table has read, so the pages already opened stay. */
 export function reloadSize(shown: number, pageSize: number): number {
   return Math.min(SUBGRAPH_MAX_FIRST, Math.max(pageSize, shown));
 }

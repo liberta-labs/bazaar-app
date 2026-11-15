@@ -18,6 +18,7 @@ import { AdlMeter, positionAdl } from "./Adl";
 import { CollateralPanel } from "./Collateral";
 import { ExportCsv } from "./ExportCsv";
 import { Modal } from "./Modal";
+import { ACCOUNT_PAGE, usePaged } from "./Pager";
 import { TableTools } from "./TableTools";
 import { ActionButton, Empty, Pnl, Term, Tip } from "./ui";
 
@@ -330,7 +331,7 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
     const mark = marketSnaps.get(s.market.address)?.markPrice ?? 0n;
     return { s, h, spot, mark, liq: liquidation(s, spot), adl: positionAdl(s, h) };
   });
-  const { sorted, th } = useSort(view, {
+  const { sorted, th, order } = useSort(view, {
     market: (v) => v.s.market.label,
     side: (v) => (v.s.position.isLong ? "Long" : "Short"),
     size: (v) => v.s.position.size,
@@ -345,6 +346,7 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
     adl: (v) => v.adl?.score,
     tpsl: (v) => v.s.takeProfit?.triggerPrice ?? v.s.stopLoss?.triggerPrice ?? null,
   });
+  const { shown, pager } = usePaged(sorted, ACCOUNT_PAGE, order);
   if (!rows.length) return <Empty title="No open positions">Open one from a market's page: pick an amount, buy or sell.</Empty>;
   return (
     <>
@@ -410,7 +412,7 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ s, h, spot, mark, liq }) => {
+            {shown.map(({ s, h, spot, mark, liq }) => {
               const risky = h && h.marginRatio < 1.5;
               const collateral = s.position.collateral;
               return (
@@ -484,6 +486,7 @@ export function PositionsTable({ snaps, showMarket = true, onChanged }: { snaps:
           </tbody>
         </table>
       </div>
+      {pager}
       {dialog?.kind === "tpsl" && <TpSlDialog s={dialog.s} onClose={() => setDialog(null)} />}
       {(dialog?.kind === "deposit" || dialog?.kind === "withdraw") && (
         <Modal title={`${dialog.s.market.label} collateral`} onClose={() => setDialog(null)}>
@@ -588,7 +591,7 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [editing, setEditing] = useState<null | { s: account.AccountSnapshot; o: account.AccountOrder }>(null);
   const rows = useMemo(() => snaps.flatMap((s) => s.orders.map((o) => ({ s, o, key: `${s.market.address}-${o.orderId}` }))), [snaps]);
-  const { sorted, th } = useSort(rows, {
+  const { sorted, th, order } = useSort(rows, {
     market: (r) => r.s.market.label,
     type: (r) => TYPE_TEXT[r.o.typeName] ?? r.o.typeName,
     side: (r) => (r.o.isLong ? "Buy" : "Sell"),
@@ -602,6 +605,7 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
     expires: (r) => (r.o.neverExpires ? Number.MAX_SAFE_INTEGER : r.o.blocksLeft),
     order: (r) => r.o.orderId,
   });
+  const { shown, pager } = usePaged(sorted, ACCOUNT_PAGE, order);
   if (!rows.length) return <Empty title="No open orders">Limit, stop and take-profit orders you place show here until they fill.</Empty>;
 
   const cancel = (list: typeof rows) => {
@@ -665,7 +669,8 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
               <th>
                 <input
                   type="checkbox"
-                  aria-label="Select all"
+                  aria-label={`Select all ${rows.length} orders`}
+                  title={rows.length > ACCOUNT_PAGE ? `Select all ${rows.length} orders, on every page` : undefined}
                   style={{ width: "auto", minHeight: 0 }}
                   checked={chosen.length === rows.length}
                   onChange={(e) => setPicked(new Set(e.target.checked ? rows.map((r) => r.key) : []))}
@@ -686,7 +691,7 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ s, o, key }) => (
+            {shown.map(({ s, o, key }) => (
               <tr key={key}>
                 <td data-select="">
                   <input
@@ -740,6 +745,7 @@ export function OrdersTable({ snaps, showMarket = true }: { snaps: readonly acco
           </tbody>
         </table>
       </div>
+      {pager}
       <p className="small muted" style={{ padding: "0 10px" }}>
         Up to {orders.MAX_ACTIVE_LIMIT_ORDERS_PER_USER} resting limit and stop-limit orders per market, plus one take-profit and one stop-loss.
       </p>
