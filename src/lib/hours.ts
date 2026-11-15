@@ -213,6 +213,68 @@ export function hoursLabel(m: { readonly continuous: boolean; readonly legFeeds:
   return tradingHours(m.legFeeds)?.kind === "24/5" ? "24/5" : "trading hours";
 }
 
+/** The zone's minute of the week at `at` (Monday 00:00 is 0), or null when the zone can't be read. */
+function zoneMinuteOfWeek(zone: string, at: Date): number | null {
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", { timeZone: zone, weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at).map((p) => [p.type, p.value]),
+    );
+    const day = DAYS.indexOf(parts.weekday as (typeof DAYS)[number]);
+    return day < 0 ? null : day * DAY + Number(parts.hour) * 60 + Number(parts.minute);
+  } catch {
+    return null;
+  }
+}
+
+/** A market's week: the minutes (in its own zone, Monday first) when every leg has a live price, and the minute it is now. */
+export interface MarketWeek {
+  readonly open: Uint8Array;
+  readonly nowMinute: number;
+}
+
+/**
+ * When a market trades, minute by minute through the week, for measuring over its open time; null for
+ * one open around the clock (24/7), or whose schedule can't be read or whose legs keep different time
+ * zones, which are measured by the clock.
+ */
+export function marketWeek(m: { readonly continuous: boolean; readonly legFeeds: readonly (ProSymbol | null)[] }, at: Date = new Date()): MarketWeek | null {
+  if (m.continuous || m.legFeeds.length === 0 || m.legFeeds.some((l) => l === null)) return null;
+  const schedules = m.legFeeds.map((l) => feedSchedule(l!));
+  if (schedules.some((s) => s === null)) return null;
+  const all = schedules as WeekSchedule[];
+  if (all.some((s) => s.zone !== all[0]!.zone)) return null;
+  const open = new Uint8Array(WEEK);
+  let any = false;
+  for (let t = 0; t < WEEK; t++)
+    if (all.every((s) => s.open[t])) {
+      open[t] = 1;
+      any = true;
+    }
+  const nowMinute = zoneMinuteOfWeek(all[0]!.zone, at);
+  return any && nowMinute !== null ? { open, nowMinute } : null;
+}
+
+/**
+ * The stretch back from now holding a market's last `openMinutes` of trading time, at most `maxMinutes`
+ * back: how far back it reaches (seconds) and the open time inside it (seconds), with the open time a
+ * year (seconds). A stock's last 24 hours of trading on a Sunday reach back into Thursday; a 24/7
+ * market's (week null) are simply the last 24 hours. Holidays aren't taken off.
+ */
+export function lastOpenStretch(week: MarketWeek | null, openMinutes: number, maxMinutes: number): { backSeconds: number; openSeconds: number; yearOpenSeconds: number } {
+  if (!week) return { backSeconds: openMinutes * 60, openSeconds: openMinutes * 60, yearOpenSeconds: YEAR_HOURS * 3600 };
+  let weekOpen = 0;
+  for (let t = 0; t < WEEK; t++) weekOpen += week.open[t]!;
+  let found = 0;
+  let back = 0;
+  // The minute now is under way: count back from the one before it.
+  while (found < openMinutes && back < maxMinutes) {
+    back++;
+    const t = (((week.nowMinute - back) % WEEK) + WEEK) % WEEK;
+    found += week.open[t]!;
+  }
+  return { backSeconds: back * 60, openSeconds: found * 60, yearOpenSeconds: weekOpen * 60 * (365 / 7) };
+}
+
 /** Hours a year in a 24/7 market. */
 const YEAR_HOURS = 24 * 365;
 /** A US stock's regular session, 6.5 hours a weekday: the assumption when a market's schedule can't be read. */

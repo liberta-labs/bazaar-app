@@ -1,7 +1,7 @@
 import { previews, ZERO_ADDRESS } from "@liberta-labs/bazaar-sdk";
 import type { Address } from "viem";
 import { describe, expect, it } from "vitest";
-import { MIN_RETURN_WINDOW_SECONDS, RETURN_WINDOW_SECONDS, estimateInsuranceReturn, insuranceFeeOf, returnWindowSeconds, sharePriceOfEvent, windowText } from "../src/lib/insuranceReturn";
+import { MIN_RETURN_WINDOW_SECONDS, RETURN_WINDOW_SECONDS, estimateInsuranceReturn, feeMultiplier, insuranceFeeOf, returnWindowSeconds, sharePriceOfEvent, windowText } from "../src/lib/insuranceReturn";
 
 const E18 = 10n ** 18n;
 const FRONTEND = "0x00000000000000000000000000000000000001e7" as Address;
@@ -85,6 +85,55 @@ describe("sharePriceOfEvent", () => {
   it("has none for events that move no money", () => {
     expect(sharePriceOfEvent({ kind: "WithdrawalRequested", amount: 0n, shares: 10n * E18 })).toBeNull();
     expect(sharePriceOfEvent({ kind: "LevyCharged", amount: 0n, shares: E18 })).toBeNull();
+  });
+});
+
+describe("the last day of trading", () => {
+  const DAY = 86_400;
+  const now = 20_000 * DAY;
+  // Two fills in the last day ($0.99 each to the fund), one a week ago.
+  const trades = [
+    { ...fill(10_000n * E18, 25n, 75n), timestamp: now - 3_600 },
+    { ...fill(10_000n * E18, 25n, 75n), timestamp: now - 20 * 3_600 },
+    { ...fill(10_000n * E18, 25n, 75n), timestamp: now - 7 * DAY },
+  ];
+
+  it("counts the last 24 hours' fees, over a year, on a market open around the clock", () => {
+    const r = estimateInsuranceReturn({ trades, fundValue: 1_000n * E18, now });
+    expect(r.recentFees).toBe((198n * E18) / 100n);
+    expect(r.recentApr).toBeCloseTo(0.00198 * 365, 10);
+  });
+
+  it("scales a stock's last day of trading by its trading time a year, not 365 days", () => {
+    // A 24/5 stock: 120 hours a week, so a year holds about 261 days of trading. Its last day ran Thursday to Friday.
+    const yearOpenSeconds = ((120 * 365) / 7) * 3_600;
+    const recent = { from: now - 64 * 3_600, openSeconds: DAY, yearOpenSeconds };
+    const r = estimateInsuranceReturn({ trades, fundValue: 1_000n * E18, recent, now });
+    expect(r.recentFees).toBe((198n * E18) / 100n);
+    expect(r.recentApr).toBeCloseTo(0.00198 * (yearOpenSeconds / DAY), 10);
+  });
+
+  it("has none for an empty fund, and says when the day's fills weren't all read", () => {
+    expect(estimateInsuranceReturn({ trades, fundValue: 0n, now }).recentApr).toBeNull();
+    expect(estimateInsuranceReturn({ trades, fundValue: E18, recentComplete: false, now }).recentComplete).toBe(false);
+  });
+});
+
+describe("feeMultiplier", () => {
+  it("is 1 at or above target, or with no open interest", () => {
+    expect(feeMultiplier(6_000n, 5_000n)).toBe(1);
+    expect(feeMultiplier(5_000n, 5_000n)).toBe(1);
+    expect(feeMultiplier(2n ** 256n - 1n, 5_000n)).toBe(1);
+  });
+
+  it("is the contract's own multiple of the base rate below target", () => {
+    const r = previews.takerInsuranceFeeRates(4_500n, 5_000n);
+    // To three decimals, cut rather than rounded.
+    expect(feeMultiplier(4_500n, 5_000n)).toBeCloseTo(Number(r.takerEbp) / Number(r.closingEbp), 2);
+    expect(feeMultiplier(4_500n, 5_000n)).toBeGreaterThan(1);
+    // Deeper below target, higher, until the 50 bp cap holds it.
+    expect(feeMultiplier(4_000n, 5_000n)).toBeGreaterThan(feeMultiplier(4_500n, 5_000n));
+    expect(feeMultiplier(1_000n, 5_000n)).toBe(feeMultiplier(2_500n, 5_000n));
   });
 });
 

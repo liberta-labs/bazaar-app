@@ -1,6 +1,6 @@
 import type { ProSymbol } from "@liberta-labs/bazaar-sdk";
 import { describe, expect, it } from "vitest";
-import { FALLBACK_SESSION_HOURS, feedSchedule, fundingHoursPerYear, parseSchedule, tradingHours } from "../src/lib/hours";
+import { FALLBACK_SESSION_HOURS, feedSchedule, fundingHoursPerYear, lastOpenStretch, marketWeek, parseSchedule, tradingHours } from "../src/lib/hours";
 
 // Schedules as Pyth's registry writes them.
 const NY = "America/New_York";
@@ -114,5 +114,43 @@ describe("fundingHoursPerYear", () => {
     expect(fundingHoursPerYear(market([feed("not a schedule")]))).toBe(FALLBACK_SESSION_HOURS);
     expect(fundingHoursPerYear(market([feed(TOKYO), feed(REGULAR)]))).toBe(FALLBACK_SESSION_HOURS);
     expect(fundingHoursPerYear(market([]))).toBe(FALLBACK_SESSION_HOURS);
+  });
+});
+
+describe("the last 24 hours of trading", () => {
+  const market = (legFeeds: (ProSymbol | null)[], continuous = false) => ({ continuous, legFeeds });
+  const stock = feed(REGULAR, { regular: REGULAR, pre: PRE, post: POST, overnight: NIGHT });
+  const H = 3600;
+
+  it("is the clock's last 24 hours on a market open around the clock", () => {
+    expect(marketWeek(market([feed(ALWAYS)], true))).toBeNull();
+    expect(lastOpenStretch(null, 24 * 60, 30 * 24 * 60)).toEqual({ backSeconds: 24 * H, openSeconds: 24 * H, yearOpenSeconds: 8_760 * H });
+  });
+
+  it("reaches back past a weekend for a stock traded around the clock on weekdays", () => {
+    // Sunday noon in New York: closed since Friday 20:00, so its last day of trading ran Thursday 20:00 to Friday 20:00.
+    const week = marketWeek(market([stock]), new Date("2026-11-15T17:00:00Z"))!;
+    expect(week.nowMinute).toBe(6 * 1440 + 12 * 60);
+    const s = lastOpenStretch(week, 24 * 60, 30 * 24 * 60);
+    expect(s.backSeconds).toBe((40 + 24) * H);
+    expect(s.openSeconds).toBe(24 * H);
+    expect(s.yearOpenSeconds / H).toBeCloseTo((120 * 365) / 7, 6);
+  });
+
+  it("reaches back days for a stock traded in regular hours alone", () => {
+    // Monday 10:00 in New York: 30 minutes today, then Friday, Thursday and Wednesday's 6.5 hours, then
+    // the last 4 hours of Tuesday's session, from noon.
+    const week = marketWeek(market([feed(REGULAR, { regular: REGULAR })]), new Date("2026-11-16T15:00:00Z"))!;
+    const s = lastOpenStretch(week, 24 * 60, 30 * 24 * 60);
+    expect(s.openSeconds).toBe(24 * H);
+    expect(s.backSeconds).toBe(142 * H);
+    expect(s.yearOpenSeconds / H).toBeCloseTo((32.5 * 365) / 7, 6);
+  });
+
+  it("stops at the limit, with what open time it found", () => {
+    const week = marketWeek(market([feed(REGULAR, { regular: REGULAR })]), new Date("2026-11-16T15:00:00Z"))!;
+    const s = lastOpenStretch(week, 24 * 60, 600);
+    expect(s.backSeconds).toBe(600 * 60);
+    expect(s.openSeconds).toBe(30 * 60);
   });
 });

@@ -42,6 +42,31 @@ export interface FeeTrade {
   readonly takerFee: bigint;
   readonly makerIntegrator: Address;
   readonly takerIntegrator: Address;
+  /** When it filled (unix seconds): what puts it in the last day. */
+  readonly timestamp?: number;
+}
+
+/**
+ * The recent window: the market's last 24 hours of trading, which shows a busier market or a fund below
+ * target within hours. Trading time, not the clock's: a stock's figure over a weekend or a night is its
+ * last day of trading, not zero.
+ */
+export const RECENT_OPEN_MINUTES = 24 * 60;
+
+/** Where the recent window starts (unix seconds), the trading time in it, and the trading time in a year. */
+export interface RecentWindow {
+  readonly from: number;
+  readonly openSeconds: number;
+  readonly yearOpenSeconds: number;
+}
+
+/**
+ * How many times the base rate a taker adding risk pays now: above 1 while the fund is below its
+ * target, up to the 50 bp cap, which is when insuring the market pays most. 1 at or above target.
+ */
+export function feeMultiplier(coverageRatioBp: bigint, targetRatioBp: bigint): number {
+  const r = previews.takerInsuranceFeeRates(coverageRatioBp, targetRatioBp);
+  return r.closingEbp > 0n ? Number((r.takerEbp * 1000n) / r.closingEbp) / 1000 : 1;
 }
 
 const hasIntegrator = (a: Address) => a.toLowerCase() !== ZERO_ADDRESS.toLowerCase();
@@ -61,6 +86,12 @@ export function insuranceFeeOf(t: FeeTrade): bigint {
 }
 
 export interface ReturnEstimate {
+  /** What the last 24 hours' fills credited to the fund, 18 decimals. */
+  readonly recentFees: bigint;
+  /** The last 24 hours' fee yield on the fund's value, times 365; null when the fund is empty. */
+  readonly recentApr: number | null;
+  /** False when not every fill of the last 24 hours could be read: the yield is then a lower bound. */
+  readonly recentComplete: boolean;
   /** What the window's fills credited to the fund, 18 decimals. */
   readonly insuranceFees: bigint;
   /** Annualized fee yield on the fund's value (0.12 = 12% a year); null when the fund is empty. */
@@ -96,20 +127,40 @@ export function estimateInsuranceReturn(args: {
   /** When sharePriceThen was the price (unix seconds). */
   readonly sharePriceSince?: number | null;
   readonly complete?: boolean;
+  /** The recent window (the last 24 hours of trading); without it, the clock's last 24 hours. */
+  readonly recent?: RecentWindow;
+  /** Whether every fill in the recent window was read. */
+  readonly recentComplete?: boolean;
   /** Unix seconds; now unless given. */
   readonly now?: number;
 }): ReturnEstimate {
   const windowSeconds = args.windowSeconds ?? RETURN_WINDOW_SECONDS;
+  const at = args.now ?? Date.now() / 1000;
   const insuranceFees = args.trades.reduce((s, t) => s + insuranceFeeOf(t), 0n);
   const feeApr = args.fundValue > 0n && windowSeconds > 0 ? ratio(insuranceFees, args.fundValue) * (YEAR_SECONDS / windowSeconds) : null;
+  // The last day of trading's fees, scaled by how much trading time a year holds.
+  const recent = args.recent ?? { from: at - RECENT_OPEN_MINUTES * 60, openSeconds: RECENT_OPEN_MINUTES * 60, yearOpenSeconds: YEAR_SECONDS };
+  const recentFees = args.trades.reduce((s, t) => (t.timestamp !== undefined && t.timestamp >= recent.from ? s + insuranceFeeOf(t) : s), 0n);
+  const recentApr = args.fundValue > 0n && recent.openSeconds > 0 ? ratio(recentFees, args.fundValue) * (recent.yearOpenSeconds / recent.openSeconds) : null;
   const now = args.sharePriceNow ?? null;
   const then = args.sharePriceThen ?? null;
   const sharePriceChange = now !== null && then !== null && then > 0n ? ratio(now - then, then) : null;
   const sharePriceSince = sharePriceChange === null ? null : (args.sharePriceSince ?? null);
   // Over the time the change covers, at least a day, as the fee yield.
-  const covered = sharePriceSince === null ? null : Math.max(MIN_RETURN_WINDOW_SECONDS, (args.now ?? Date.now() / 1000) - sharePriceSince);
+  const covered = sharePriceSince === null ? null : Math.max(MIN_RETURN_WINDOW_SECONDS, at - sharePriceSince);
   const netApr = sharePriceChange === null || covered === null ? null : sharePriceChange * (YEAR_SECONDS / covered);
-  return { insuranceFees, feeApr, sharePriceChange, sharePriceSince, netApr, windowSeconds, complete: args.complete ?? true };
+  return {
+    recentFees,
+    recentApr,
+    recentComplete: args.recentComplete ?? args.complete ?? true,
+    insuranceFees,
+    feeApr,
+    sharePriceChange,
+    sharePriceSince,
+    netApr,
+    windowSeconds,
+    complete: args.complete ?? true,
+  };
 }
 
 /** The share price an insurance event implies: USD moved per share. Null for events that move no USD. */

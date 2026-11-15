@@ -9,7 +9,17 @@ import { ActionButton, Empty, Loading, Pnl, StatusBadge, Term, Tip, useAsync } f
 import { explain } from "../lib/errors";
 import { amount, dateTime, parseInput, pct, relative, shortDate, signedPct, signedUsd, toInput, usd } from "../lib/format";
 import { EXIT_STEPS, exitDue, exitStage } from "../lib/insuranceExit";
-import { RETURN_WINDOW_SECONDS, type ReturnEstimate, estimateInsuranceReturn, returnWindowSeconds, sharePriceOfEvent, windowText } from "../lib/insuranceReturn";
+import { lastOpenStretch, marketWeek } from "../lib/hours";
+import {
+  RECENT_OPEN_MINUTES,
+  RETURN_WINDOW_SECONDS,
+  type ReturnEstimate,
+  estimateInsuranceReturn,
+  feeMultiplier,
+  returnWindowSeconds,
+  sharePriceOfEvent,
+  windowText,
+} from "../lib/insuranceReturn";
 import { forAccount, insuranceDepositPart, insuranceExecutePart, insuranceRequestPart } from "../lib/jobs";
 import { openInterestNotional } from "../lib/openInterest";
 import { CONTRACT_WALLET_REASON } from "../lib/wallet";
@@ -436,6 +446,8 @@ function FundRow({
   const oi = openInterestNotional(snap);
   const target = (oi * snap.insurance.targetRatioBp) / 10_000n;
   const fill = target > 0n ? Math.min(1, toNumber18(snap.insurance.fund) / toNumber18(target)) : 1;
+  // How many times the base fee a trader adding risk pays now: above 1 while the fund is below target.
+  const boost = budget ? feeMultiplier(budget.coverageRatioBp, budget.targetRatioBp) : 1;
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
   return (
@@ -472,6 +484,13 @@ function FundRow({
               <div style={{ width: `${fill * 100}%` }} />
             </div>
             <div className="small muted">target {usd(target)}</div>
+            {boost >= 1.05 && (
+              <Tip text={`Below target: a trader adding risk pays ${boost.toFixed(1)}× the base fee until the fund is refilled, so insurers earn more meanwhile.`}>
+                <span className="badge warn" style={{ marginTop: 4 }}>
+                  fees ×{boost.toFixed(1)}
+                </span>
+              </Tip>
+            )}
           </div>
         </td>
         <td data-label="Withdrawal budget" className="num hide-sm">
@@ -480,20 +499,32 @@ function FundRow({
         <td data-label="Est. yearly return" className="num">
           {est === undefined ? (
             "…"
-          ) : est === null || est.feeApr === null ? (
+          ) : est === null || est.recentApr === null ? (
             "–"
           ) : (
             <>
-              <Tip text={`Fees: the fund's ${usd(est.insuranceFees)} share of ${windowText(est.windowSeconds)} on ${usd(snap.insurance.freeCapital)}, annualized. Past results, not a promise.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
-                <span className="term">{pct(est.feeApr)}</span>
+              <Tip
+                text={`The last day of trading: the fund's ${usd(est.recentFees)} share of the fees in the market's last 24 hours of trading, on ${usd(snap.insurance.freeCapital)}, over a year of trading. It moves within hours when trading picks up or the fund falls below target. Past results, not a promise.${est.recentComplete ? "" : " A lower bound: some fills couldn't be read."}`}
+              >
+                <span className="term">{pct(est.recentApr)}</span>
               </Tip>
-              {est.netApr !== null && est.sharePriceSince !== null && (
-                <div className="small">
-                  <Tip text={`Net: the share price's change since ${shortDate(est.sharePriceSince)}, annualized. Fees less what the fund paid out, such as a liquidation's shortfall, and levies.`}>
-                    <span className={`term ${est.netApr < 0 ? "down" : "muted"}`}>net {pct(est.netApr)}</span>
+              <div className="small muted">
+                {est.feeApr !== null && (
+                  <Tip text={`Steadier: the fund's ${usd(est.insuranceFees)} share of ${windowText(est.windowSeconds)} on ${usd(snap.insurance.freeCapital)}, annualized.${est.complete ? "" : " A lower bound: some fills couldn't be read."}`}>
+                    <span className="term">
+                      {Math.max(1, Math.round(est.windowSeconds / 86_400))}d {pct(est.feeApr)}
+                    </span>
                   </Tip>
-                </div>
-              )}
+                )}
+                {est.netApr !== null && est.sharePriceSince !== null && (
+                  <>
+                    {" · "}
+                    <Tip text={`Net: the share price's change since ${shortDate(est.sharePriceSince)}, annualized. Fees less what the fund paid out, such as a liquidation's shortfall, and levies.`}>
+                      <span className={`term${est.netApr < 0 ? " down" : ""}`}>net {pct(est.netApr)}</span>
+                    </Tip>
+                  </>
+                )}
+              </div>
             </>
           )}
         </td>
@@ -568,9 +599,31 @@ export function EarnPage() {
       const r = inputs.get(keyOf(m.address));
       const snap = snaps.get(m.address);
       if (r === undefined || !snap) continue;
+      if (!r) {
+        out.set(keyOf(m.address), null);
+        continue;
+      }
+      // The market's last 24 hours of trading: a stock's reach back past a weekend or a night.
+      const now = Date.now() / 1000;
+      const stretch = lastOpenStretch(marketWeek(m), RECENT_OPEN_MINUTES, RETURN_WINDOW_SECONDS / 60);
+      const recent = { from: now - stretch.backSeconds, openSeconds: stretch.openSeconds, yearOpenSeconds: stretch.yearOpenSeconds };
+      // Fills come newest first: the window's are all in when the read reached past its start.
+      const oldest = r.trades[r.trades.length - 1]?.timestamp;
+      const recentComplete = r.complete || (oldest !== undefined && oldest < recent.from);
       out.set(
         keyOf(m.address),
-        r && estimateInsuranceReturn({ trades: r.trades, fundValue: snap.insurance.freeCapital, windowSeconds: r.windowSeconds, sharePriceNow: r.sharePriceNow, sharePriceThen: r.sharePriceThen, sharePriceSince: r.sharePriceSince, complete: r.complete }),
+        estimateInsuranceReturn({
+          trades: r.trades,
+          fundValue: snap.insurance.freeCapital,
+          windowSeconds: r.windowSeconds,
+          sharePriceNow: r.sharePriceNow,
+          sharePriceThen: r.sharePriceThen,
+          sharePriceSince: r.sharePriceSince,
+          complete: r.complete,
+          recent,
+          recentComplete,
+          now,
+        }),
       );
     }
     return out;
@@ -585,7 +638,7 @@ export function EarnPage() {
   const rowsKey = rows.map((m) => m.address).join(",");
   const mineKey = [...mine.keys()].join(",");
   const ordered = useMemo(() => {
-    const apr = (m: markets.MarketInfo) => estimatesRef.current.get(keyOf(m.address))?.feeApr ?? -1;
+    const apr = (m: markets.MarketInfo) => estimatesRef.current.get(keyOf(m.address))?.recentApr ?? -1;
     const held = (m: markets.MarketInfo) => (mine.has(keyOf(m.address)) ? 1 : 0);
     return [...rows].sort((a, b) => held(b) - held(a) || (allIn ? apr(b) - apr(a) : 0));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -627,7 +680,7 @@ export function EarnPage() {
       const b = budgets.data?.get(keyOf(m.address));
       return b ? (b.unlimited ? Number.POSITIVE_INFINITY : b.remaining) : null;
     },
-    return: (m) => estimates.get(keyOf(m.address))?.feeApr,
+    return: (m) => estimates.get(keyOf(m.address))?.recentApr,
     sharePrice: (m) => estimates.get(keyOf(m.address))?.sharePriceChange,
     stake: (m) => holdings.data?.get(keyOf(m.address))?.value,
   });
@@ -691,7 +744,7 @@ export function EarnPage() {
                     <Term t="budget">Withdrawal budget</Term>
                   </th>
                   <th {...th("return", "num")}>
-                    <Tip text="The fund's share of the last 30 days of fees (since listing, for a market younger than that) over its value, annualized. Under it, net: the share price's change annualized, which also takes off what the fund paid out. Past performance, not a promise.">
+                    <Tip text="The fund's share of the fees in the market's last 24 hours of trading, over its value, scaled to a year of trading: it moves within hours when trading picks up or the fund falls below target. A stock's counts its last trading day over a weekend or a night. Under it, the steadier 30-day figure (since listing, for a younger market) and the net: the share price's change annualized, which also takes off what the fund paid out. Past performance, not a promise.">
                       <span className="term">Est. yearly return</span>
                     </Tip>
                   </th>
