@@ -48,7 +48,7 @@ export class RelayFeeTooLowError extends Error {
 
 /** The signature ran out of time before it could be sent: sign again. */
 export class RelayExpiredError extends Error {
-  constructor(message = "The signature ran out of time before Bazaar's relayer could send it. Sign again and approve as soon as your wallet opens: a gasless signature is valid for about 10 seconds.") {
+  constructor(message = "The signature ran out of time before Bazaar's relayer could send it. Sign again and approve as soon as your wallet opens: a gasless signature is valid for about 30 seconds.") {
     super(message);
   }
 }

@@ -203,7 +203,7 @@ export function TxProvider({ children }: { children: ReactNode }) {
                 if (s.step === "sign")
                   patchStep(i, {
                     detail:
-                      "Approve in your wallet. If it asks twice, the first is a USDC permit (no time limit); approve the second within 10 seconds.",
+                      "Approve in your wallet. If it asks twice, the first is a USDC permit (no time limit); approve the second within 30 seconds.",
                   });
                 if (s.step === "relaying") patchStep(i, { detail: "Relaying: Bazaar's relayer is sending it for you…" });
                 if (s.step === "confirming") patchStep(i, { detail: "Confirming on Arbitrum…", hash: s.hash });
