@@ -12,6 +12,7 @@ export const STOCK_LOGO_FILES: Readonly<Record<string, StockLogoFile>> = {
   "KMX": { etag: "3874e4e6e77adadbc949c68238b9f41340842677d679b6087029c142a72e834e", transparent: true },
   "NVDA": { etag: "671900f7917cef842144172afb1d40e9ced7d721dcb5204287b47ab6dd8da024", transparent: false },
   "OKLO": { etag: "fb802049f9b6831fc2d7bd4c00b37062d675d865624535e1aab61139e07f5c21", transparent: true },
+  "QQQ": { etag: "aac0f90b3027754c9a4a0c2e950b874f8eb9c30ad5df63fdffe863ba7ad75353", transparent: true },
   "SBUX": { etag: "6b2d51a6bb207ffdcdaa8855c2bda8c542624ab18a98f417d00fde81bd81e86f", transparent: true },
   "SKHY": { etag: "0932c4f2bb0b0304e3e2ac01c8c3577d0b68399fcabe4d6cfd2b2d37d20c7799", transparent: true },
   "SOFI": { etag: "2cee592206b26337d7518c5f398a113f8a504f572d2e5226d7b33c63b5471ccb", transparent: true },
