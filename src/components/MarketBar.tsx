@@ -7,17 +7,51 @@ import { markets as mk, previews } from "@liberta-labs/bazaar-sdk";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { dayChange } from "../lib/board";
-import { leverage, pct, price, rate18, signedPct, usd } from "../lib/format";
+import { leverageShort, pct, price, rateTone, signedPct, signedRate18, usd } from "../lib/format";
 import { assetName } from "../lib/assetName";
 import { fundingHoursPerYear, hoursLabel } from "../lib/hours";
 import { openInterestNotional } from "../lib/openInterest";
 import { useBoard, useRead } from "../state/connection";
-import { useDayStats } from "../state/data";
+import { useDayStats, useMarketSnapshots } from "../state/data";
 import { PriceAge, StatusBadge, Term, Tip } from "./ui";
 import { AssetIcon } from "./AssetIcon";
+import { LeverageBadge } from "./LeverageBadge";
 import { MarketFilterChips, matchesSearch, useMarketFilter } from "./MarketFilters";
 import { StarButton, StarIcon } from "./StarButton";
 
+/**
+ * The switcher's markets, each with its price, max leverage, trading hours and day's change. Mounted only
+ * while the list is open, so every market's snapshot is read only then.
+ */
+function MarketMenuRows({ rows, current, onPick }: { rows: readonly mk.MarketInfo[]; current: mk.MarketInfo; onPick: (m: mk.MarketInfo) => void }) {
+  const { prices } = useBoard();
+  const day = useDayStats();
+  const { snaps } = useMarketSnapshots();
+  return rows.map((m) => {
+    const p = prices?.price(m.address);
+    const ch = dayChange(p?.spot, prices?.dayAgo(m.address), day.get(m.address)?.open)?.pct ?? null;
+    const here = m.address === current.address;
+    return (
+      <div key={m.address} className={`market-menu-row${here ? " current" : ""}`}>
+        <button type="button" className="market-menu-item" aria-current={here ? "page" : undefined} onClick={() => onPick(m)}>
+          <span className="spread">
+            <span className="market-name">
+              <AssetIcon market={m} size={18} />
+              <b>{m.label}</b>
+              <LeverageBadge snap={snaps.get(m.address)} tip={false} />
+            </span>
+            <span className="mono">{p ? price(p.spot) : "–"}</span>
+          </span>
+          <span className="spread small">
+            <span className="muted">{hoursLabel(m)}</span>
+            <span className={ch === null ? "muted" : ch >= 0 ? "up" : "down"}>{ch === null ? "–" : signedPct(ch)}</span>
+          </span>
+        </button>
+        <StarButton market={m} />
+      </div>
+    );
+  });
+}
 
 /**
  * The market switcher: the current market's button, opening a search box, the filter chips the markets
@@ -26,8 +60,6 @@ import { StarButton, StarIcon } from "./StarButton";
  */
 function MarketPicker({ info, maxLev }: { info: mk.MarketInfo; maxLev: number | null }) {
   const { markets: list } = useRead();
-  const { prices } = useBoard();
-  const day = useDayStats();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -103,7 +135,7 @@ function MarketPicker({ info, maxLev }: { info: mk.MarketInfo; maxLev: number | 
             )}
           </span>
         </span>
-        {maxLev !== null && <span className="badge">{leverage(maxLev).replace(".00", "")}</span>}
+        {maxLev !== null && <span className="badge">{leverageShort(maxLev)}</span>}
         <span className="muted">▾</span>
       </button>
       {open && (
@@ -126,29 +158,7 @@ function MarketPicker({ info, maxLev }: { info: mk.MarketInfo; maxLev: number | 
           </div>
           <MarketFilterChips state={show} />
           <div className="market-menu-list" ref={items}>
-            {rows.map((m) => {
-              const p = prices?.price(m.address);
-              const ch = dayChange(p?.spot, prices?.dayAgo(m.address), day.get(m.address)?.open)?.pct ?? null;
-              const current = m.address === info.address;
-              return (
-                <div key={m.address} className={`market-menu-row${current ? " current" : ""}`}>
-                  <button type="button" className="market-menu-item" aria-current={current ? "page" : undefined} onClick={() => go(m)}>
-                    <span className="spread">
-                      <span className="market-name">
-                        <AssetIcon market={m} size={18} />
-                        <b>{m.label}</b>
-                      </span>
-                      <span className="mono">{p ? price(p.spot) : "–"}</span>
-                    </span>
-                    <span className="spread small">
-                      <span className="muted">{hoursLabel(m)}</span>
-                      <span className={ch === null ? "muted" : ch >= 0 ? "up" : "down"}>{ch === null ? "–" : signedPct(ch)}</span>
-                    </span>
-                  </button>
-                  <StarButton market={m} />
-                </div>
-              );
-            })}
+            <MarketMenuRows rows={rows} current={info} onPick={go} />
             {rows.length === 0 && (
               <div className="market-menu-empty small muted">
                 {needle ? (
@@ -228,7 +238,7 @@ export function MarketBar({ info, snap, spot, stored }: { info: mk.MarketInfo; s
         </span>
         {funding !== null ? (
           <Tip text={`Annualized: ${pct(mk.annualizedFunding(funding, fundingHoursPerYear(info)))}`}>
-            <span className={`mono ${funding > 0n ? "down" : funding < 0n ? "up" : ""}`}>{rate18(funding)}</span>
+            <span className={`mono ${rateTone(funding)}`}>{signedRate18(funding)}</span>
           </Tip>
         ) : (
           <span className="mono">–</span>

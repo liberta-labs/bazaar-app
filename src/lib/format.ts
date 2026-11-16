@@ -73,6 +73,19 @@ export function rate18(x: bigint, dp = 4): string {
   return `${(toNumber18(x) * 100).toFixed(dp)}%`;
 }
 
+/** An 18-decimal rate with its sign, as exchanges show funding: "+0.0017%", "-0.0002%", and no sign on one that rounds to zero. */
+export function signedRate18(x: bigint, dp = 4): string {
+  const s = rate18(x, dp);
+  if (!/[1-9]/.test(s)) return rate18(0n, dp);
+  return x > 0n ? `+${s}` : s;
+}
+
+/** The colour class for a rate shown by {@link signedRate18}: none for one that shows as zero. */
+export const rateTone = (x: bigint, dp = 4): "up" | "down" | "" => {
+  const s = signedRate18(x, dp);
+  return s.startsWith("+") ? "up" : s.startsWith("-") ? "down" : "";
+};
+
 export const bp = (x: bigint) => format.formatBp(x);
 export const duration = (s: number) => format.formatDuration(Math.max(0, Math.round(s)));
 
@@ -94,6 +107,9 @@ export function relative(unix: number, now: number = Date.now() / 1000): string 
 export const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
 export const leverage = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? "–" : `${x.toFixed(x < 10 ? 2 : 1)}×`);
+
+/** A market's leverage for a badge, without trailing zeros: "25×", "12.5×", "2.5×". */
+export const leverageShort = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? "–" : `${Number(x.toFixed(x < 10 ? 2 : 1))}×`);
 
 /** Parse what a user typed; null for anything that is not a plain decimal. */
 export function parseInput(text: string): bigint | null {

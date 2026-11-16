@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { GLOSSARY } from "../lib/glossary";
 import { type TradingHoursText, fundingHoursPerYear, tradingHours } from "../lib/hours";
 import { openInterestNotional, openInterestSize } from "../lib/openInterest";
-import { bp, dateTime, leverage, pct, price, rate18, relative, sizeText, usd } from "../lib/format";
+import { bp, dateTime, leverage, pct, price, rateTone, relative, signedRate18, sizeText, usd } from "../lib/format";
 import { StatusBadge, Term, Tip } from "./ui";
 
 const HOURS_LABEL: Record<TradingHoursText["kind"], string> = { "24/7": "24/7", "24/5": "24/5", hours: "Market hours" };
@@ -58,7 +58,7 @@ export function MarketFacts({ snap, oracle }: { snap: mk.MarketSnapshot; oracle:
         <Term t="funding">Funding</Term>
       </span>
       <span>
-        <span className={funding > 0n ? "down" : funding < 0n ? "up" : ""}>{rate18(funding)} / h</span>
+        <span className={rateTone(funding)}>{signedRate18(funding)} / h</span>
         <div className="small muted">{pct(annual)} a year {funding > 0n ? "(longs pay)" : funding < 0n ? "(shorts pay)" : ""}</div>
       </span>
       <span>

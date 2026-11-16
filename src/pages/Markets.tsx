@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FaucetButton } from "../components/Faucet";
 import { AssetIcon } from "../components/AssetIcon";
+import { LeverageBadge } from "../components/LeverageBadge";
 import { NetworkHelpLink } from "../components/NetworkHelp";
 import { MarketFilterChips, NoMarketMatch, matchesSearch, useMarketFilter } from "../components/MarketFilters";
 import { StarButton } from "../components/StarButton";
@@ -12,7 +13,7 @@ import { ACTIVE } from "../config/networks";
 import { dayChange } from "../lib/board";
 import { GLOSSARY } from "../lib/glossary";
 import { fundingHoursPerYear, hoursLabel, tradingHours } from "../lib/hours";
-import { pct, price, rate18, signedPct, usd } from "../lib/format";
+import { pct, price, signedPct, signedRate18, usd } from "../lib/format";
 import { openInterestNotional } from "../lib/openInterest";
 import { HAS_PROJECT_ID } from "../state/appkit";
 import { useBoard, useRead, useWallet } from "../state/connection";
@@ -201,7 +202,11 @@ export function MarketsPage() {
                             <AssetIcon market={m} size={22} />
                             <b>{m.label}</b>
                           </span>
-                          <HoursBadge m={m} />
+                          {/* Together, so a narrow table moves both under the name rather than splitting them. */}
+                          <span className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                            <LeverageBadge snap={s} />
+                            <HoursBadge m={m} />
+                          </span>
                           {s?.venueClosed === true && (
                             <Tip text={GLOSSARY.venueClosed}>
                               <span className="badge warn">venue closed</span>
@@ -222,7 +227,7 @@ export function MarketsPage() {
                       <td className="num hide-sm">
                         {s ? (
                           <Tip text={`Annualized: ${pct(mk.annualizedFunding(s.funding.currentRatePerHour, fundingHoursPerYear(m)))}`}>
-                            <span>{rate18(s.funding.currentRatePerHour)}</span>
+                            <span>{signedRate18(s.funding.currentRatePerHour)}</span>
                           </Tip>
                         ) : (
                           "–"

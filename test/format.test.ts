@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chartPrecision, price, priceInput, sizeText, zerosAfterPoint } from "../src/lib/format";
+import { chartPrecision, leverageShort, price, priceInput, rateTone, signedRate18, sizeText, zerosAfterPoint } from "../src/lib/format";
 
 const e18 = (s: string) => {
   const [w = "0", f = ""] = s.split(".");
@@ -47,5 +47,31 @@ describe("sizeText", () => {
     expect(sizeText(123_456_789_000_000_000n)).toBe("0.1234");
     expect(sizeText(0n)).toBe("0");
     expect(sizeText(-72_028_751_685_708n)).toBe("-0.00007202");
+  });
+});
+
+describe("signedRate18", () => {
+  it("puts + on a positive rate, keeps - on a negative one, and no sign on one that rounds to zero", () => {
+    expect(signedRate18(e18("0.000017"))).toBe("+0.0017%");
+    expect(signedRate18(-e18("0.000002"))).toBe("-0.0002%");
+    expect(signedRate18(0n)).toBe("0.0000%");
+    expect(signedRate18(e18("0.0000000001"))).toBe("0.0000%");
+    expect(signedRate18(-e18("0.0000000001"))).toBe("0.0000%");
+  });
+
+  it("colours by the sign shown", () => {
+    expect(rateTone(e18("0.000017"))).toBe("up");
+    expect(rateTone(-e18("0.000002"))).toBe("down");
+    expect(rateTone(-e18("0.0000000001"))).toBe("");
+  });
+});
+
+describe("leverageShort", () => {
+  it("drops trailing zeros", () => {
+    expect(leverageShort(25)).toBe("25×");
+    expect(leverageShort(12.5)).toBe("12.5×");
+    expect(leverageShort(2.5)).toBe("2.5×");
+    expect(leverageShort(5)).toBe("5×");
+    expect(leverageShort(null)).toBe("–");
   });
 });
