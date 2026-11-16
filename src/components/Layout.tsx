@@ -217,6 +217,9 @@ function StatusBar() {
       <a className="status-link" href="https://github.com/liberta-labs/bazaar-app" target="_blank" rel="noopener noreferrer">
         GitHub ↗
       </a>
+      <a className="status-link" href="https://github.com/liberta-labs/bazaar-app/issues" target="_blank" rel="noopener noreferrer">
+        Report a bug ↗
+      </a>
     </footer>
   );
 }
