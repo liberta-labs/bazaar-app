@@ -214,7 +214,8 @@ With the service running locally and `.env` filled in, each of these should then
 ## License
 
 The code is [MIT](LICENSE), like the [SDK](https://github.com/liberta-labs/bazaar-sdk). The license does
-not grant use of the Bazaar name or logos (`public/bazaar-*.png`); a copy you host should use its own.
+not grant use of the Bazaar name or logos (`public/bazaar-*.png`, and the link-preview image
+`public/og-image.png`); a copy you host should use its own, and point the `og:image` tags in `index.html` at it.
 Nor does it cover the company logos in `public/stock-logos/`: they belong to their companies and are
 downloaded from [Logo.dev](https://www.logo.dev) under its terms (`npm run logos`, run daily by the
 Stock logos workflow). A copy you host should download its own with its own Logo.dev key.
