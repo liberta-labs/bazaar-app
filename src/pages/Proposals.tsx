@@ -143,17 +143,6 @@ function RuleButtons({ onRule, ifTrue, ifFalse }: { onRule: (result: boolean) =>
   );
 }
 
-/**
- * {@link RuleButtons} in place of `children` while the claim is disputed and the connected wallet can
- * rule on it (`canRule`), for a list that doesn't say which of its claims are disputed: it reads the
- * claim's phase from the oracle, again whenever `version` changes.
- */
-function RuleIfDisputed({ id, home, canRule, version, children, ...rule }: { id: Hex; home: "factory" | "terminator"; canRule: boolean; version: number; children: ReactNode } & Parameters<typeof RuleButtons>[0]) {
-  const { readBz } = useRead();
-  const st = useAsync(async () => (readBz && canRule ? readBz.uma.assertionStatus(id, { home }) : null), [readBz, id, home, canRule, version]);
-  return st.data?.phase === "disputed" ? <RuleButtons {...rule} /> : <>{children}</>;
-}
-
 function Notice({ text, onClose }: { text: string | null; onClose: () => void }) {
   if (!text) return null;
   return (
@@ -166,9 +155,9 @@ function Notice({ text, onClose }: { text: string | null; onClose: () => void })
   );
 }
 
-function AssertionLine({ id, home }: { id: Hex; home: "factory" | "terminator" }) {
+function AssertionLine({ id, home, version = 0 }: { id: Hex; home: "factory" | "terminator"; version?: number }) {
   const { readBz } = useRead();
-  const st = useAsync(async () => (readBz ? readBz.uma.assertionStatus(id, { home }) : null), [readBz, id]);
+  const st = useAsync(async () => (readBz ? readBz.uma.assertionStatus(id, { home }) : null), [readBz, id, version]);
   const s = st.data;
   if (!s) return <span className="small muted">reading UMA…</span>;
   return (
@@ -270,7 +259,7 @@ const GUIDE: Record<ProposalTab, { bond: string; window: string; checks: string;
     checks:
       "An event that has happened or is scheduled for a fixed date: the asset is delisted, the feed is decommissioned, a structural change (a split, a spinoff, a special dividend over 5%), or a Pyth migration. Price moves are never grounds.",
     after:
-      "Trading stops at the cutoff and every position settles at Pyth's price then; the proposer earns 0.1% of the insurance fund (up to $100). A market's insurers can also end it by voting: 60% of matured shares.",
+      "Trading stops at the cutoff and every position settles at Pyth's price then; the proposer earns 0.1% of the insurance fund (up to $100). A market's insurers can also end it by voting: 60% of matured shares. Once UMA accepts a claim or a vote reaches 60%, anyone can settle it.",
     docs: `${DOCS}/termination.html`,
   },
   identifier: {
@@ -976,12 +965,12 @@ function ProposeTermination({ m, insurer, onClose }: { m: markets.MarketInfo; in
   );
 }
 
-function VoteDialog({ m, v, onClose }: { m: markets.MarketInfo; v: term.InsurerProposalInfo; onClose: () => void }) {
+function VoteDialog({ label, v, onClose }: { label: string; v: term.InsurerProposalInfo; onClose: () => void }) {
   const costed = useCosted();
   const [text, setText] = useState("");
   const shares = parseInput(text);
   return (
-    <Modal title={`Vote to end ${m.label}`} onClose={onClose}>
+    <Modal title={`Vote to end ${label}`} onClose={onClose}>
       <div className="stack">
         <p className="small muted">
           Votes count shares deposited at least 4 days before the vote opened, and can't be withdrawn. Voted shares are locked until the cutoff; if the vote ends the market and UMA doesn't uphold
@@ -1000,7 +989,7 @@ function VoteDialog({ m, v, onClose }: { m: markets.MarketInfo; v: term.InsurerP
           <input className="num" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} />
         </label>
         <Notice text={costed.notice} onClose={costed.clear} />
-        <button className="primary" disabled={!shares || shares <= 0n} onClick={() => void costed.run("Vote yes", (bz, user) => bz.termination.voteForInsurerTermination({ pair: m.address, id: v.id, shares: shares!, from: user }), onClose)}>
+        <button className="primary" disabled={!shares || shares <= 0n} onClick={() => void costed.run("Vote yes", (bz, user) => bz.termination.voteForInsurerTermination({ pair: v.pair, id: v.id, shares: shares!, from: user }), onClose)}>
           Review vote
         </button>
       </div>
@@ -1016,31 +1005,235 @@ const PHASE_TEXT: Record<term.TerminationPhase, string> = {
   terminated: "Ended",
 };
 
+/** Sends a transaction from a terminations table, then reloads what the page shows. */
+type Act = (label: string, build: (bz: Bazaar, user: Address) => Promise<Costed | null>) => () => void;
+
+/** The market a proposal is on, linked to it, as the first column of a table of every market's proposals. */
+function MarketCell({ pair, market }: { pair: Address; market: markets.MarketInfo | undefined }) {
+  return (
+    <td data-label="Market">
+      {market ? (
+        <Link to={`/market/${market.address}`}>
+          <b>{market.label}</b>
+        </Link>
+      ) : (
+        <Addr a={pair} />
+      )}
+    </td>
+  );
+}
+
+/**
+ * One open UMA termination claim and what anyone can do with it now, picked by its UMA phase as for
+ * a listing: dispute it while the window is open; settle it once the window has closed undisputed
+ * (UMA accepts it and the market is scheduled to end) or once a dispute has been ruled on. On testnet
+ * the deployer can also settle early or rule. `market` adds a column naming the market.
+ */
+function ClaimRow({
+  c,
+  market,
+  txHash,
+  act,
+  early,
+  version,
+}: {
+  c: term.TerminationProposalInfo;
+  market?: { info: markets.MarketInfo | undefined };
+  txHash: Hex | undefined;
+  act: Act;
+  early: boolean;
+  version: number;
+}) {
+  const { readBz } = useRead();
+  const st = useAsync(async () => (readBz ? readBz.uma.assertionStatus(c.assertionId, { home: "terminator" }) : null), [readBz, c.assertionId, version]);
+  const now = st.data?.now ?? Date.now() / 1000;
+  // Until UMA's answer is in, the claim's own window decides.
+  const phase = st.data?.phase ?? (now < c.livenessEndsAt ? "liveness" : "settleable");
+  const settle = act("Settle claim", (bz, user) => bz.termination.settleTerminationProposal({ assertionId: c.assertionId, from: user }));
+  return (
+    <tr>
+      {market && <MarketCell pair={c.pair} market={market.info} />}
+      <td data-main="">
+        UMA claim: <b>{c.categoryName}</b>
+        <div className="small muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+          {c.reason}
+        </div>
+        <ProposalDetails
+          txHash={txHash}
+          facts={[
+            { k: "Grounds", v: c.categoryName },
+            groundsOf(c.category) && { k: "Which means", v: groundsOf(c.category)!.description },
+            { k: "Reason", v: <span className="prewrap">{c.reason}</span> },
+            { k: "Proposed cutoff", v: dateTime(c.lastTradingTs) },
+            { k: "Proposed by", v: <Addr a={c.proposer} /> },
+            { k: "Proposed", v: dateTime(c.proposalTs) },
+            { k: "Disputes close", v: dateTime(c.livenessEndsAt) },
+            { k: "UMA assertion", v: <Mono>{c.assertionId}</Mono> },
+          ]}
+        />
+      </td>
+      <td data-label="Status" className="small">
+        <AssertionLine id={c.assertionId} home="terminator" version={version} />
+      </td>
+      <td data-label="Cutoff" className="small">
+        {dateTime(c.lastTradingTs)}
+      </td>
+      <td data-actions="">
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          {phase === "liveness" && (
+            <button className="small" onClick={act("Dispute claim", (bz, user) => bz.uma.disputeAssertion({ assertionId: c.assertionId, from: user, home: "terminator" }))}>
+              Dispute
+            </button>
+          )}
+          {phase === "liveness" && early && (
+            <button
+              className="small primary"
+              title={SETTLE_EARLY_TIP}
+              onClick={act("Settle claim early", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, home: "terminator" }))}
+            >
+              Settle early
+            </button>
+          )}
+          {phase === "settleable" && (
+            <button className="small primary" title="Nobody disputed it: settling has UMA accept the claim, returns the proposer's bond, and schedules the market to end." onClick={settle}>
+              Settle
+            </button>
+          )}
+          {phase === "disputed" &&
+            (early ? (
+              <RuleButtons
+                ifTrue="the market is scheduled to terminate at the claim's cutoff, and the proposer gets both bonds."
+                ifFalse="the market keeps trading, and the disputer gets both bonds."
+                onRule={(result) => act(result ? "Accept the claim" : "Reject the claim", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, result, home: "terminator" }))()}
+              />
+            ) : (
+              <button className="small primary" title={`Disputed: settling succeeds once ${TEAM_RULES ? "the Bazaar team has" : "UMA's voters have"} ruled, and applies the verdict.`} onClick={settle}>
+                Settle
+              </button>
+            ))}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * One open insurer vote and what can be done with it now: an insurer votes yes while it is open, and
+ * anyone settles it once it reaches 60% of the snapshot (the market is scheduled to end at its
+ * cutoff) or once its voting has closed (it resolves as failed). `market` adds a column naming the
+ * market.
+ */
+function VoteRow({
+  v,
+  market,
+  txHash,
+  act,
+  onVote,
+  version,
+}: {
+  v: term.InsurerProposalInfo;
+  market?: { info: markets.MarketInfo | undefined };
+  txHash: Hex | undefined;
+  act: Act;
+  onVote: (v: term.InsurerProposalInfo) => void;
+  version: number;
+}) {
+  const { readBz } = useRead();
+  const w = useWallet();
+  const myShares = useAsync(async () => (readBz && w.address ? readBz.insurance.insuranceShares(v.pair, w.address) : 0n), [readBz, w.address, v.pair, version]);
+  const now = Date.now() / 1000;
+  return (
+    <tr>
+      {market && <MarketCell pair={v.pair} market={market.info} />}
+      <td data-main="">
+        Insurer vote {v.claimBacked ? "(with a UMA claim)" : ""}
+        <ProposalDetails
+          txHash={txHash}
+          facts={[
+            { k: "Kind", v: v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote" },
+            { k: "State", v: v.state },
+            { k: "Cutoff", v: dateTime(v.cutoffTs) },
+            { k: "Voting opens", v: dateTime(v.windowOpenTs) },
+            { k: "Voting closes", v: dateTime(v.votingClosesAt) },
+            { k: "Yes votes", v: `${amount(v.yesShares, 4)} shares` },
+            { k: "Needed", v: v.snapshotTaken ? `${amount(v.thresholdShares, 4)} shares, 60% of ${amount(v.snapshotTotalShares, 4)}` : "set when voting opens" },
+            { k: "Proposed by", v: <Addr a={v.proposer} /> },
+            { k: "Proposed", v: dateTime(v.proposalTs) },
+            { k: v.claimBacked ? "UMA assertion" : "Vote id", v: <Mono>{v.id}</Mono> },
+          ]}
+        />
+      </td>
+      <td data-label="Status" className="small">
+        {v.state === "expired" ? "voting closed" : v.thresholdMet ? "reached 60%" : v.state} · yes {amount(v.yesShares, 2)} / {v.snapshotTaken ? amount(v.thresholdShares, 2) : "–"} shares
+        <div className="muted">
+          {v.state === "upcoming"
+            ? `voting opens ${relative(v.windowOpenTs, now)}`
+            : v.state === "voting"
+              ? `voting closes ${relative(v.votingClosesAt, now)}`
+              : v.thresholdMet
+                ? "reached 60%, but wasn't settled before voting closed"
+                : "fell short of 60%"}
+        </div>
+      </td>
+      <td data-label="Cutoff" className="small">
+        {dateTime(v.cutoffTs)}
+      </td>
+      <td data-actions="">
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          {v.state === "voting" && (myShares.data ?? 0n) > 0n && (
+            <button className="small" onClick={() => onVote(v)}>
+              Vote yes
+            </button>
+          )}
+          {(v.thresholdMet || v.state === "expired") && !v.resolved && (
+            <button
+              className="small primary"
+              title={
+                v.thresholdMet && v.state !== "expired"
+                  ? "The vote reached 60%: settling it schedules the market to end at its cutoff and returns the proposer's bond."
+                  : `Voting has closed, so this vote can no longer end the market: settling resolves it as failed${
+                      v.claimBacked ? ". Its claim's bond stays with UMA, and the claim is settled on its own." : v.thresholdMet ? " and refunds its bond." : " and forfeits its bond to the insurance fund."
+                    }`
+              }
+              onClick={act("Settle vote", (bz, user) => bz.termination.executeInsurerTermination({ pair: v.pair, id: v.id, from: user }))}
+            >
+              Settle
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function MarketTermination({
   m,
   snap,
   claimTx,
   voteTx,
+  version,
+  onChanged,
 }: {
   m: markets.MarketInfo;
   snap: markets.MarketSnapshot | undefined;
   /** Each recent claim's and vote's transaction, by id (lower case), from the history below. */
   claimTx: ReadonlyMap<string, Hex>;
   voteTx: ReadonlyMap<string, Hex>;
+  /** Bumped by the page after any transaction, so this panel and the open list read the chain again together. */
+  version: number;
+  onChanged: () => void;
 }) {
   const { readBz } = useRead();
   const w = useWallet();
   const costed = useCosted();
   const early = useCanSettleEarly();
-  const [n, setN] = useState(0);
   const [dialog, setDialog] = useState<null | { kind: "uma" | "insurer" } | { kind: "vote"; v: term.InsurerProposalInfo }>(null);
-  const st = useAsync(async () => (readBz ? readBz.termination.terminationStatus(m.address) : null), [readBz, m.address, n]);
+  const st = useAsync(async () => (readBz ? readBz.termination.terminationStatus(m.address) : null), [readBz, m.address, version]);
   const myShares = useAsync(async () => (readBz && w.address ? readBz.insurance.insuranceShares(m.address, w.address) : 0n), [readBz, w.address, m.address]);
-  const reload = () => setN((x) => x + 1);
   const s = st.data;
   const stale = snap && snap.price.age > ORACLE_DEAD_THRESHOLD;
   const now = s?.now ?? Date.now() / 1000;
-  const act = (label: string, build: (bz: Bazaar, user: Address) => Promise<Costed | null>) => () => void costed.run(label, build, reload);
+  const act: Act = (label, build) => () => void costed.run(label, build, onChanged);
 
   return (
     <div className="panel" style={{ marginBottom: 10 }}>
@@ -1096,137 +1289,121 @@ function MarketTermination({
           <table className="rtable">
             <tbody>
               {s.openProposals.termination.map((c) => (
-                <tr key={c.assertionId}>
-                  <td data-main="">
-                    UMA claim: <b>{c.categoryName}</b>
-                    <div className="small muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                      {c.reason}
-                    </div>
-                    <ProposalDetails
-                      txHash={claimTx.get(c.assertionId.toLowerCase())}
-                      facts={[
-                        { k: "Grounds", v: c.categoryName },
-                        groundsOf(c.category) && { k: "Which means", v: groundsOf(c.category)!.description },
-                        { k: "Reason", v: <span className="prewrap">{c.reason}</span> },
-                        { k: "Proposed cutoff", v: dateTime(c.lastTradingTs) },
-                        { k: "Proposed by", v: <Addr a={c.proposer} /> },
-                        { k: "Proposed", v: dateTime(c.proposalTs) },
-                        { k: "Disputes close", v: dateTime(c.livenessEndsAt) },
-                        { k: "UMA assertion", v: <Mono>{c.assertionId}</Mono> },
-                      ]}
-                    />
-                  </td>
-                  <td data-label="Cutoff" className="small">
-                    cutoff {dateTime(c.lastTradingTs)}
-                    <div>
-                      <AssertionLine id={c.assertionId} home="terminator" />
-                    </div>
-                  </td>
-                  <td data-actions="">
-                    <div className="row" style={{ justifyContent: "flex-end" }}>
-                      <RuleIfDisputed
-                        id={c.assertionId}
-                        home="terminator"
-                        canRule={early}
-                        version={n}
-                        ifTrue="the market is scheduled to terminate at the claim's cutoff, and the proposer gets both bonds."
-                        ifFalse="the market keeps trading, and the disputer gets both bonds."
-                        onRule={(result) =>
-                          act(result ? "Accept the claim" : "Reject the claim", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, result, home: "terminator" }))()
-                        }
-                      >
-                        {now < c.livenessEndsAt && (
-                          <button className="small" onClick={act("Dispute claim", (bz, user) => bz.uma.disputeAssertion({ assertionId: c.assertionId, from: user, home: "terminator" }))}>
-                            Dispute
-                          </button>
-                        )}
-                        {now < c.livenessEndsAt && early && (
-                          <button
-                            className="small primary"
-                            title={SETTLE_EARLY_TIP}
-                            onClick={act("Settle claim early", (bz, user) => bz.uma.settleEarly({ assertionId: c.assertionId, from: user, home: "terminator" }))}
-                          >
-                            Settle early
-                          </button>
-                        )}
-                        {now >= c.livenessEndsAt && (
-                          <button className="small primary" onClick={act("Settle claim", (bz, user) => bz.termination.settleTerminationProposal({ assertionId: c.assertionId, from: user }))}>
-                            Settle
-                          </button>
-                        )}
-                      </RuleIfDisputed>
-                    </div>
-                  </td>
-                </tr>
+                <ClaimRow key={c.assertionId} c={c} txHash={claimTx.get(c.assertionId.toLowerCase())} act={act} early={early} version={version} />
               ))}
               {s.openProposals.insurer.map((v) => (
-                <tr key={v.id}>
-                  <td data-main="">
-                    Insurer vote {v.claimBacked ? "(with a UMA claim)" : ""}
-                    <div className="small muted">
-                      {v.state} · yes {amount(v.yesShares, 2)} / {amount(v.thresholdShares, 2)} shares needed
-                    </div>
-                    <ProposalDetails
-                      txHash={voteTx.get(v.id.toLowerCase())}
-                      facts={[
-                        { k: "Kind", v: v.claimBacked ? "Opened by a UMA claim" : "Insurers' own vote" },
-                        { k: "State", v: v.state },
-                        { k: "Cutoff", v: dateTime(v.cutoffTs) },
-                        { k: "Voting opens", v: dateTime(v.windowOpenTs) },
-                        { k: "Voting closes", v: dateTime(v.votingClosesAt) },
-                        { k: "Yes votes", v: `${amount(v.yesShares, 4)} shares` },
-                        { k: "Needed", v: v.snapshotTaken ? `${amount(v.thresholdShares, 4)} shares, 60% of ${amount(v.snapshotTotalShares, 4)}` : "set when voting opens" },
-                        { k: "Proposed by", v: <Addr a={v.proposer} /> },
-                        { k: "Proposed", v: dateTime(v.proposalTs) },
-                        { k: v.claimBacked ? "UMA assertion" : "Vote id", v: <Mono>{v.id}</Mono> },
-                      ]}
-                    />
-                  </td>
-                  <td data-label="Cutoff" className="small">
-                    cutoff {dateTime(v.cutoffTs)}
-                    <div className="muted">voting closes {relative(v.votingClosesAt, now)}</div>
-                  </td>
-                  <td data-actions="">
-                    <div className="row" style={{ justifyContent: "flex-end" }}>
-                      {v.state === "voting" && (myShares.data ?? 0n) > 0n && (
-                        <button className="small" onClick={() => setDialog({ kind: "vote", v })}>
-                          Vote yes
-                        </button>
-                      )}
-                      {(v.thresholdMet || v.state === "expired") && !v.resolved && (
-                        <button className="small primary" onClick={act("Execute vote", (bz, user) => bz.termination.executeInsurerTermination({ pair: m.address, id: v.id, from: user }))}>
-                          Execute
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                <VoteRow key={v.id} v={v} txHash={voteTx.get(v.id.toLowerCase())} act={act} onVote={(x) => setDialog({ kind: "vote", v: x })} version={version} />
               ))}
             </tbody>
           </table>
         </div>
       )}
-      {(dialog?.kind === "uma" || dialog?.kind === "insurer") && <ProposeTermination m={m} insurer={dialog.kind === "insurer"} onClose={() => (setDialog(null), reload())} />}
-      {dialog?.kind === "vote" && <VoteDialog m={m} v={dialog.v} onClose={() => (setDialog(null), reload())} />}
+      {(dialog?.kind === "uma" || dialog?.kind === "insurer") && <ProposeTermination m={m} insurer={dialog.kind === "insurer"} onClose={() => (setDialog(null), onChanged())} />}
+      {dialog?.kind === "vote" && <VoteDialog label={m.label} v={dialog.v} onClose={() => (setDialog(null), onChanged())} />}
     </div>
+  );
+}
+
+const EMPTY_TX: ReadonlyMap<string, Hex> = new Map();
+
+/** One row of the open terminations table: a UMA claim or an insurer vote, by its cutoff. */
+type OpenTermination = { readonly kind: "claim"; readonly c: term.TerminationProposalInfo } | { readonly kind: "vote"; readonly v: term.InsurerProposalInfo };
+const openCutoff = (r: OpenTermination) => (r.kind === "claim" ? r.c.lastTradingTs : r.v.cutoffTs);
+
+/**
+ * Every market's open termination claims and insurer votes in one table, as open listings are, so
+ * anyone can dispute a claim or settle one UMA accepted, or settle a vote that reached 60%, without
+ * first picking its market. The subgraph names the open ones; each is then read on chain, so one
+ * settled since the index last caught up doesn't linger.
+ */
+function OpenTerminations({
+  open,
+  find,
+  version,
+  onChanged,
+}: {
+  open: { rows: readonly OpenTermination[]; claimTx: ReadonlyMap<string, Hex>; voteTx: ReadonlyMap<string, Hex> } | null | undefined;
+  find: (p: Address) => markets.MarketInfo | undefined;
+  version: number;
+  onChanged: () => void;
+}) {
+  const costed = useCosted();
+  const early = useCanSettleEarly();
+  const [voting, setVoting] = useState<term.InsurerProposalInfo | null>(null);
+  const act: Act = (label, build) => () => void costed.run(label, build, onChanged);
+  return (
+    <>
+      <Notice text={costed.notice} onClose={costed.clear} />
+      {!open ? (
+        <Loading />
+      ) : !open.rows.length ? (
+        <Empty title="No termination is open">Choose a market below to propose ending it.</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table className="rtable">
+            <thead>
+              <tr>
+                <th>Market</th>
+                <th>Proposal</th>
+                <th>Status</th>
+                <th>Cutoff</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {open.rows.map((r) =>
+                r.kind === "claim" ? (
+                  <ClaimRow
+                    key={`c${r.c.assertionId}`}
+                    c={r.c}
+                    market={{ info: find(r.c.pair) }}
+                    txHash={open.claimTx.get(r.c.assertionId.toLowerCase())}
+                    act={act}
+                    early={early}
+                    version={version}
+                  />
+                ) : (
+                  <VoteRow key={`v${r.v.id}`} v={r.v} market={{ info: find(r.v.pair) }} txHash={open.voteTx.get(r.v.id.toLowerCase())} act={act} onVote={setVoting} version={version} />
+                ),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {voting && <VoteDialog label={find(voting.pair)?.label ?? shortAddr(voting.pair)} v={voting} onClose={() => (setVoting(null), onChanged())} />}
+    </>
   );
 }
 
 function Terminations() {
   const { readBz, markets: list } = useRead();
   const { snaps } = useMarketSnapshots();
-  // The open claims' and votes' transactions, for their details in the market panel. The history pages
-  // below, however long it gets.
-  const openTx = useAsync(async () => {
+  const [n, setN] = useState(0);
+  const reload = () => setN((x) => x + 1);
+  // The open claims and votes across every market, with their transactions for the details. The
+  // history pages below, however long it gets.
+  const open = useAsync(async () => {
     if (!readBz) return null;
     const [claims, votes] = await Promise.all([
       readBz.history.terminationProposals({ status: ["Pending", "Disputed"], first: 100 }),
       readBz.history.insurerProposals({ status: ["Open", "Scheduled"], first: 100 }),
     ]);
-    return { claims: claims.items, votes: votes.items };
-  }, [readBz]);
-  const claimTx = useMemo(() => new Map((openTx.data?.claims ?? []).map((c) => [c.id.toLowerCase(), c.transactionHash])), [openTx.data]);
-  const voteTx = useMemo(() => new Map((openTx.data?.votes ?? []).map((v) => [v.id.toLowerCase(), v.transactionHash])), [openTx.data]);
+    const [c, v] = await Promise.all([
+      Promise.all(claims.items.map((x) => readBz.termination.terminationProposal(x.id))),
+      Promise.all(votes.items.filter((x) => x.status === "Open").map((x) => readBz.termination.insurerProposal(x.id))),
+    ]);
+    const rows: OpenTermination[] = [
+      ...c.filter((x): x is term.TerminationProposalInfo => !!x && !x.resolved).map((x) => ({ kind: "claim" as const, c: x })),
+      ...v.filter((x): x is term.InsurerProposalInfo => !!x && !x.resolved).map((x) => ({ kind: "vote" as const, v: x })),
+    ].sort((a, b) => openCutoff(a) - openCutoff(b));
+    return {
+      rows,
+      claimTx: new Map(claims.items.map((x) => [x.id.toLowerCase(), x.transactionHash])),
+      voteTx: new Map(votes.items.map((x) => [x.id.toLowerCase(), x.transactionHash])),
+    };
+  }, [readBz, n]);
+  const claimTx = open.data?.claimTx ?? EMPTY_TX;
+  const voteTx = open.data?.voteTx ?? EMPTY_TX;
   // UMA claims and insurer votes, newest first, as one list a page at a time.
   const loadHistory = useMemo(() => {
     if (!readBz) return null;
@@ -1267,6 +1444,9 @@ function Terminations() {
           A market can be ended if its price feed stops, its asset is delisted, or its price series breaks. Anyone can propose it to UMA with a bond; a market's{" "}
           <Term t="insurance">insurers</Term> can also vote it through. Ended markets settle every position at a final price.
         </p>
+        <h3>Open</h3>
+        <OpenTerminations open={open.data} find={find} version={n} onChanged={reload} />
+        <h3 style={{ marginTop: 12 }}>By market</h3>
         {!list.length ? (
           <Loading />
         ) : (
@@ -1287,7 +1467,7 @@ function Terminations() {
                 })}
               </select>
             </label>
-            {picked && <MarketTermination key={picked.address} m={picked} snap={snaps.get(picked.address)} claimTx={claimTx} voteTx={voteTx} />}
+            {picked && <MarketTermination key={picked.address} m={picked} snap={snaps.get(picked.address)} claimTx={claimTx} voteTx={voteTx} version={n} onChanged={reload} />}
           </>
         )}
         <h3 style={{ marginTop: 12 }}>History</h3>
